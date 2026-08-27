@@ -19,6 +19,7 @@ const IDENTITY_ALIASES = {
   row: ['row', 'linha'],
   column: ['column', 'coluna'],
   discarded: ['is discarded', 'discarded', 'descartado'],
+  uuid: ['uuid'],
 };
 
 function normalize(value: string) {
@@ -92,10 +93,11 @@ export default function Home() {
     row: findHeader(headers, IDENTITY_ALIASES.row),
     column: findHeader(headers, IDENTITY_ALIASES.column),
     discarded: findHeader(headers, IDENTITY_ALIASES.discarded),
+    uuid: findHeader(headers, IDENTITY_ALIASES.uuid),
   }), [headers]);
 
   const identityColumns = useMemo(() => {
-    const preferred = [columnMap.feid, columnMap.name, columnMap.pedigree, columnMap.history, columnMap.entryCode, columnMap.plot, columnMap.row, columnMap.column, columnMap.block, columnMap.discarded, columnMap.observation];
+    const preferred = [columnMap.uuid, columnMap.feid, columnMap.name, columnMap.pedigree, columnMap.history, columnMap.entryCode, columnMap.plot, columnMap.row, columnMap.column, columnMap.block, columnMap.discarded, columnMap.observation];
     return preferred.filter((column): column is string => Boolean(column));
   }, [columnMap]);
 
@@ -172,7 +174,7 @@ export default function Home() {
     if (!columnMap.name || !columnMap.block) return [];
     type RepetitionGroup = { output: DataRow; valuesByBlock: Map<string, CellValue[]> };
     const groups = new Map<string, RepetitionGroup>();
-    const baseColumns = [columnMap.name, columnMap.pedigree, columnMap.history, columnMap.observation]
+    const baseColumns = [columnMap.name, columnMap.entryCode, columnMap.pedigree, columnMap.history, columnMap.observation]
       .filter((column): column is string => Boolean(column));
 
     for (const sourceRow of filteredSourceRows) {
@@ -249,7 +251,7 @@ export default function Home() {
   const resultHeaders = useMemo(() => {
     if (mode === 'observacoes') return [...identityColumns, ...selectedMetrics];
     if (mode === 'repeticoes') {
-      const base = [columnMap.name, columnMap.pedigree, columnMap.history, columnMap.observation]
+      const base = [columnMap.name, columnMap.entryCode, columnMap.pedigree, columnMap.history, columnMap.observation]
         .filter((column): column is string => Boolean(column));
       return [...base, 'Variável', ...availableBlocks.map(blockHeader), 'Média'];
     }
