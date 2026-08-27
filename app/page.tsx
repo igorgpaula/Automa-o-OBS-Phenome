@@ -7,7 +7,6 @@ type CellValue = string | number | boolean | Date | null | undefined;
 type DataRow = Record<string, CellValue>;
 type ViewMode = 'observacoes' | 'parcelas';
 
-const PHENOME_TYPE_ORDER = ['GF', 'GM', 'EM', 'FM', 'FG', 'AS', 'IG'];
 const IDENTITY_ALIASES = {
   observation: ['observation name', 'observation', 'observacao', 'observação'],
   plot: ['origin', 'plot', 'plot id', 'parcela'],
@@ -16,6 +15,8 @@ const IDENTITY_ALIASES = {
   history: ['selection history', 'historico de selecao', 'histórico de seleção'],
   block: ['block', 'bloco'],
 };
+
+const REQUIRED_IDENTIFIERS = ['Name', 'Pedigree', 'Selection history', 'Origin', 'Block'];
 
 function normalize(value: string) {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -37,6 +38,10 @@ function findHeader(headers: string[], aliases: string[]) {
   return headers.find((header) => aliases.includes(normalize(header)));
 }
 
+function naturalCompare(a: string, b: string) {
+  return a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' });
+}
+
 function safeFileStem(value: string) {
   return value.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
 }
@@ -53,6 +58,7 @@ export default function Home() {
   const [onlyWithValues, setOnlyWithValues] = useState(true);
   const [search, setSearch] = useState('');
   const [metricSearch, setMetricSearch] = useState('');
+  const [typeSearch, setTypeSearch] = useState('');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -80,14 +86,17 @@ export default function Home() {
   const availableTypes = useMemo(() => {
     if (!columnMap.observation) return [];
     const found = Array.from(new Set(rows.map((row) => String(row[columnMap.observation!] ?? '').trim()).filter(Boolean)));
-    return found.sort((a, b) => {
-      const ai = PHENOME_TYPE_ORDER.indexOf(a);
-      const bi = PHENOME_TYPE_ORDER.indexOf(b);
-      if (ai === -1 && bi === -1) return a.localeCompare(b);
-      if (ai === -1) return 1;
-      if (bi === -1) return -1;
-      return ai - bi;
-    });
+    return found.sort(naturalCompare);
+  }, [rows, columnMap.observation]);
+
+  const typeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (!columnMap.observation) return counts;
+    for (const row of rows) {
+      const value = String(row[columnMap.observation] ?? '').trim();
+      if (value) counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+    return counts;
   }, [rows, columnMap.observation]);
 
   const metricCounts = useMemo(() => {
@@ -96,7 +105,7 @@ export default function Home() {
     for (const metric of metricColumns) counts.set(metric, 0);
     for (const row of rows) {
       const type = columnMap.observation ? String(row[columnMap.observation] ?? '').trim() : '';
-      if (typeSet.size && !typeSet.has(type)) continue;
+      if (!typeSet.has(type)) continue;
       for (const metric of metricColumns) if (isFilled(row[metric])) counts.set(metric, (counts.get(metric) ?? 0) + 1);
     }
     return counts;
@@ -107,7 +116,7 @@ export default function Home() {
     const query = normalize(search);
     return rows.filter((row) => {
       const type = columnMap.observation ? String(row[columnMap.observation] ?? '').trim() : '';
-      if (typeSet.size && !typeSet.has(type)) return false;
+      if (!typeSet.has(type)) return false;
       if (onlyWithValues && selectedMetrics.length && !selectedMetrics.some((metric) => isFilled(row[metric]))) return false;
       if (query) {
         const searchable = [columnMap.plot, columnMap.name, columnMap.pedigree]
@@ -184,13 +193,13 @@ export default function Home() {
       const rawHeaders = (matrix[0] ?? []).map((value, index) => String(value || `Coluna ${index + 1}`).trim());
       const observationColumn = findHeader(rawHeaders, IDENTITY_ALIASES.observation);
       const plotColumn = findHeader(rawHeaders, IDENTITY_ALIASES.plot);
-      if (!observationColumn || !plotColumn) throw new Error('Não encontrei as colunas “Observation name” e “Origin”. Confira se esta é uma extração de Field Observations do Phenome.');
+      const missingIdentifiers = REQUIRED_IDENTIFIERS.filter((required) => !rawHeaders.some((header) => normalize(header) === normalize(required)));
+      if (!observationColumn || !plotColumn || missingIdentifiers.length) {
+        const missing = [...missingIdentifiers, ...(!observationColumn ? ['Observation name'] : [])];
+        throw new Error(`Não encontrei as colunas obrigatórias: ${missing.join(', ')}. Confira os cabeçalhos da extração.`);
+      }
       const parsedRows = matrix.slice(1).filter((row) => row.some(isFilled)).map((values) => Object.fromEntries(rawHeaders.map((header, index) => [header, values[index] ?? ''])) as DataRow);
-      const types = Array.from(new Set(parsedRows.map((row) => String(row[observationColumn] ?? '').trim()).filter(Boolean))).sort((a, b) => {
-        const ai = PHENOME_TYPE_ORDER.indexOf(a);
-        const bi = PHENOME_TYPE_ORDER.indexOf(b);
-        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) || a.localeCompare(b);
-      });
+      const types = Array.from(new Set(parsedRows.map((row) => String(row[observationColumn] ?? '').trim()).filter(Boolean))).sort(naturalCompare);
       const fixedColumns = new Set([...Object.values(IDENTITY_ALIASES).flat(), 'evaluation date', 'evaluator']);
       const metrics = rawHeaders.filter((header) => !fixedColumns.has(normalize(header)));
       const populatedMetrics = metrics.filter((metric) => parsedRows.some((row) => isFilled(row[metric])));
@@ -204,6 +213,7 @@ export default function Home() {
       setOnlyWithValues(true);
       setSearch('');
       setMetricSearch('');
+      setTypeSearch('');
       setPage(1);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Não foi possível ler esse arquivo.');
@@ -258,6 +268,7 @@ export default function Home() {
   }
 
   const visibleMetricOptions = metricColumns.filter((metric) => normalize(metric).includes(normalize(metricSearch)));
+  const visibleTypeOptions = availableTypes.filter((type) => normalize(type).includes(normalize(typeSearch)));
 
   return (
     <main className="app-shell">
@@ -268,7 +279,7 @@ export default function Home() {
       </header>
 
       <section className="intro">
-        <div><span className="step-label">01 · Importar</span><h2>Transforme sua extração em uma tabela pronta para análise.</h2><p>Selecione o Excel do Phenome. O arquivo é processado no seu navegador e não é enviado para nenhum servidor.</p></div>
+        <div><span className="step-label">01 · Importar</span><h2>Transforme sua extração em uma tabela pronta para análise.</h2><p>O app usa Name, Pedigree, Selection history, Origin e Block como identificadores da parcela e cria os filtros a partir dos valores encontrados em Observation name.</p></div>
         <div className={`dropzone ${dragging ? 'is-dragging' : ''} ${rows.length ? 'has-file' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={handleDrop}>
           <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleInput} aria-label="Selecionar arquivo do Phenome" />
           <div className="file-icon" aria-hidden="true">XLS</div>
@@ -280,20 +291,22 @@ export default function Home() {
 
       {!rows.length ? (
         <section className="empty-preview" aria-label="Como funciona">
-          <div className="preview-head"><span className="step-label">02 · Filtrar e transformar</span><span className="preview-pill">Preparado para GF · GM · EM · FM · FG · AS · IG</span></div>
+          <div className="preview-head"><span className="step-label">02 · Filtrar e transformar</span><span className="preview-pill">Segmentação criada automaticamente por Observation name</span></div>
           <div className="preview-grid">
-            <article><span>1</span><h3>Importe</h3><p>A ferramenta identifica automaticamente as colunas e os sete tipos de observação.</p></article>
-            <article><span>2</span><h3>Escolha</h3><p>Combine tipos de observação e notas, mostrando apenas parcelas que possuem valor.</p></article>
+            <article><span>1</span><h3>Importe</h3><p>A ferramenta identifica os valores existentes em Observation name, sejam códigos, textos ou números.</p></article>
+            <article><span>2</span><h3>Segmente</h3><p>Escolha qualquer combinação de valores e notas, sem depender de uma lista predefinida.</p></article>
             <article><span>3</span><h3>Exporte</h3><p>Baixe o recorte em Excel ou CSV, no formato por observação ou por parcela.</p></article>
           </div>
         </section>
       ) : (
         <section className="workspace">
           <aside className="filters">
-            <div className="section-heading"><span className="step-label">02 · Configurar</span><button className="text-button" type="button" onClick={() => { setSelectedTypes(availableTypes); setSelectedMetrics(metricColumns.filter((metric) => (metricCounts.get(metric) ?? 0) > 0)); setSearch(''); }}>Restaurar</button></div>
+            <div className="section-heading"><span className="step-label">02 · Configurar</span><button className="text-button" type="button" onClick={() => { setSelectedTypes(availableTypes); setSelectedMetrics(metricColumns.filter((metric) => (metricCounts.get(metric) ?? 0) > 0)); setSearch(''); setTypeSearch(''); }}>Restaurar</button></div>
             <div className="filter-group">
-              <div className="filter-title"><label>Tipo de observação</label><span>{selectedTypes.length}/{availableTypes.length}</span></div>
-              <div className="type-grid">{availableTypes.map((type) => <button key={type} type="button" className={`type-chip ${selectedTypes.includes(type) ? 'selected' : ''}`} onClick={() => toggleType(type)} aria-pressed={selectedTypes.includes(type)}>{type}</button>)}</div>
+              <div className="filter-title"><label>Segmentação · Observation name</label><span>{selectedTypes.length}/{availableTypes.length}</span></div>
+              {availableTypes.length > 8 && <input id="type-search" className="search-input" value={typeSearch} onChange={(event) => setTypeSearch(event.target.value)} placeholder="Buscar valor…" />}
+              <div className="quick-actions"><button type="button" onClick={() => setSelectedTypes(availableTypes)}>Todos</button><button type="button" onClick={() => setSelectedTypes([])}>Limpar</button><span className="detected-values">{availableTypes.length} valores detectados</span></div>
+              <div className="type-grid">{visibleTypeOptions.map((type) => <button key={type} type="button" className={`type-chip ${selectedTypes.includes(type) ? 'selected' : ''}`} onClick={() => toggleType(type)} aria-pressed={selectedTypes.includes(type)} title={type}><span>{type}</span><small>{(typeCounts.get(type) ?? 0).toLocaleString('pt-BR')}</small></button>)}</div>
             </div>
             <div className="filter-group">
               <div className="filter-title"><label htmlFor="metric-search">Colunas de valores</label><span>{selectedMetrics.length}/{metricColumns.length}</span></div>
