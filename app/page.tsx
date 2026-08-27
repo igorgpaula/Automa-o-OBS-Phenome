@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx';
 
 type CellValue = string | number | boolean | Date | null | undefined;
 type DataRow = Record<string, CellValue>;
-type ViewMode = 'observacoes' | 'parcelas';
+type ViewMode = 'observacoes' | 'parcelas' | 'repeticoes';
 
 const IDENTITY_ALIASES = {
   observation: ['observation name', 'observation', 'observacao', 'observação'],
@@ -40,6 +40,19 @@ function findHeader(headers: string[], aliases: string[]) {
 
 function naturalCompare(a: string, b: string) {
   return a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' });
+}
+
+function toFiniteNumber(value: CellValue) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  const normalizedValue = value.trim().replace(',', '.');
+  if (!/^-?\d+(?:\.\d+)?$/.test(normalizedValue)) return null;
+  const parsed = Number(normalizedValue);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function blockHeader(value: string) {
+  return /^(block|bloco)\b/i.test(value.trim()) ? value.trim() : `Block ${value.trim()}`;
 }
 
 function safeFileStem(value: string) {
@@ -138,6 +151,63 @@ export default function Home() {
     return selectedTypes.flatMap((type) => selectedMetrics.map((metric) => `${type} · ${metric}`).filter((column) => populated.has(column)));
   }, [filteredSourceRows, selectedMetrics, selectedTypes, columnMap.observation]);
 
+  const availableBlocks = useMemo(() => {
+    if (!columnMap.block) return [];
+    const found = Array.from(new Set(filteredSourceRows
+      .map((row) => String(row[columnMap.block!] ?? '').trim())
+      .filter(Boolean)));
+    return found.sort(naturalCompare);
+  }, [filteredSourceRows, columnMap.block]);
+
+  const repetitionRows = useMemo<DataRow[]>(() => {
+    if (!columnMap.name || !columnMap.block || !columnMap.observation) return [];
+    type RepetitionGroup = { output: DataRow; valuesByBlock: Map<string, CellValue[]> };
+    const groups = new Map<string, RepetitionGroup>();
+    const baseColumns = [columnMap.name, columnMap.pedigree, columnMap.history, columnMap.observation]
+      .filter((column): column is string => Boolean(column));
+
+    for (const sourceRow of filteredSourceRows) {
+      const block = String(sourceRow[columnMap.block] ?? '').trim();
+      if (!block) continue;
+      for (const metric of selectedMetrics) {
+        const value = sourceRow[metric];
+        if (onlyWithValues && !isFilled(value)) continue;
+        const keyParts = [...baseColumns.map((column) => String(sourceRow[column] ?? '')), metric];
+        const key = JSON.stringify(keyParts);
+        if (!groups.has(key)) {
+          const output: DataRow = {};
+          for (const column of baseColumns) output[column] = sourceRow[column];
+          output['Variável'] = metric;
+          groups.set(key, { output, valuesByBlock: new Map() });
+        }
+        const group = groups.get(key)!;
+        if (!group.valuesByBlock.has(block)) group.valuesByBlock.set(block, []);
+        if (isFilled(value)) group.valuesByBlock.get(block)!.push(value);
+      }
+    }
+
+    return Array.from(groups.values()).map(({ output, valuesByBlock }) => {
+      const numericBlockValues: number[] = [];
+      for (const block of availableBlocks) {
+        const values = valuesByBlock.get(block) ?? [];
+        const numbers = values.map(toFiniteNumber);
+        const allNumeric = values.length > 0 && numbers.every((value) => value !== null);
+        let summarized: CellValue = '';
+        if (allNumeric) {
+          summarized = (numbers as number[]).reduce((sum, value) => sum + value, 0) / numbers.length;
+          numericBlockValues.push(summarized as number);
+        } else if (values.length) {
+          summarized = Array.from(new Set(values.map(displayValue))).join(' | ');
+        }
+        output[blockHeader(block)] = summarized;
+      }
+      output['Média'] = numericBlockValues.length
+        ? numericBlockValues.reduce((sum, value) => sum + value, 0) / numericBlockValues.length
+        : '';
+      return output;
+    });
+  }, [filteredSourceRows, selectedMetrics, onlyWithValues, availableBlocks, columnMap]);
+
   const resultRows = useMemo<DataRow[]>(() => {
     if (mode === 'observacoes') {
       return filteredSourceRows.map((row) => {
@@ -147,6 +217,7 @@ export default function Home() {
         return output;
       });
     }
+    if (mode === 'repeticoes') return repetitionRows;
     if (!columnMap.plot || !columnMap.observation) return [];
     const groups = new Map<string, DataRow>();
     for (const row of filteredSourceRows) {
@@ -164,12 +235,17 @@ export default function Home() {
       }
     }
     return Array.from(groups.values());
-  }, [mode, filteredSourceRows, identityColumns, selectedMetrics, columnMap, pivotMetricColumns]);
+  }, [mode, filteredSourceRows, identityColumns, selectedMetrics, columnMap, pivotMetricColumns, repetitionRows]);
 
-  const resultHeaders = useMemo(() => mode === 'observacoes'
-    ? [...identityColumns, ...selectedMetrics]
-    : [...identityColumns.filter((column) => column !== columnMap.observation), ...pivotMetricColumns],
-  [mode, identityColumns, selectedMetrics, pivotMetricColumns, columnMap.observation]);
+  const resultHeaders = useMemo(() => {
+    if (mode === 'observacoes') return [...identityColumns, ...selectedMetrics];
+    if (mode === 'repeticoes') {
+      const base = [columnMap.name, columnMap.pedigree, columnMap.history, columnMap.observation]
+        .filter((column): column is string => Boolean(column));
+      return [...base, 'Variável', ...availableBlocks.map(blockHeader), 'Média'];
+    }
+    return [...identityColumns.filter((column) => column !== columnMap.observation), ...pivotMetricColumns];
+  }, [mode, identityColumns, selectedMetrics, pivotMetricColumns, availableBlocks, columnMap]);
 
   const totalPlots = useMemo(() => columnMap.plot
     ? new Set(rows.map((row) => String(row[columnMap.plot!] ?? '')).filter(Boolean)).size : 0,
@@ -253,7 +329,8 @@ export default function Home() {
     const stem = safeFileStem(fileName) || 'phenome';
     if (format === 'xlsx') {
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, sheet, mode === 'parcelas' ? 'Por parcela' : 'Observações');
+      const exportSheetName = mode === 'parcelas' ? 'Por parcela' : mode === 'repeticoes' ? 'Repetições' : 'Observações';
+      XLSX.utils.book_append_sheet(workbook, sheet, exportSheetName);
       XLSX.writeFile(workbook, `${stem}_filtrado.xlsx`);
     } else {
       const csv = XLSX.utils.sheet_to_csv(sheet, { FS: ';' });
@@ -295,7 +372,7 @@ export default function Home() {
           <div className="preview-grid">
             <article><span>1</span><h3>Importe</h3><p>A ferramenta identifica os valores existentes em Observation name, sejam códigos, textos ou números.</p></article>
             <article><span>2</span><h3>Segmente</h3><p>Escolha qualquer combinação de valores e notas, sem depender de uma lista predefinida.</p></article>
-            <article><span>3</span><h3>Exporte</h3><p>Baixe o recorte em Excel ou CSV, no formato por observação ou por parcela.</p></article>
+            <article><span>3</span><h3>Exporte</h3><p>Baixe em Excel ou CSV por observação, por parcela ou comparando as repetições de cada genótipo.</p></article>
           </div>
         </section>
       ) : (
@@ -320,7 +397,8 @@ export default function Home() {
           </aside>
 
           <div className="results">
-            <div className="results-toolbar"><div><span className="step-label">03 · Visualizar e exportar</span><h2>Tabela transformada</h2></div><div className="view-switch" aria-label="Formato da tabela"><button type="button" className={mode === 'observacoes' ? 'active' : ''} onClick={() => { setMode('observacoes'); setPage(1); }}>Por observação</button><button type="button" className={mode === 'parcelas' ? 'active' : ''} onClick={() => { setMode('parcelas'); setPage(1); }}>Por parcela</button></div></div>
+            <div className="results-toolbar"><div><span className="step-label">03 · Visualizar e exportar</span><h2>Tabela transformada</h2></div><div className="view-switch" aria-label="Formato da tabela"><button type="button" className={mode === 'observacoes' ? 'active' : ''} onClick={() => { setMode('observacoes'); setPage(1); }}>Por observação</button><button type="button" className={mode === 'parcelas' ? 'active' : ''} onClick={() => { setMode('parcelas'); setPage(1); }}>Por parcela</button><button type="button" className={mode === 'repeticoes' ? 'active' : ''} onClick={() => { setMode('repeticoes'); setPage(1); }}>Por repetições</button></div></div>
+            {mode === 'repeticoes' && <p className="view-description"><strong>{availableBlocks.length} {availableBlocks.length === 1 ? 'Block detectado' : 'Blocks detectados'}.</strong> Cada linha combina genótipo, observação e variável; a média considera os Blocks com valores numéricos disponíveis.</p>}
             <div className="stats-row"><div><span>Parcelas na base</span><strong>{totalPlots.toLocaleString('pt-BR')}</strong></div><div><span>Linhas no resultado</span><strong>{resultRows.length.toLocaleString('pt-BR')}</strong></div><div><span>Notas encontradas</span><strong>{noteCount.toLocaleString('pt-BR')}</strong></div><div className="search-box"><label htmlFor="row-search">Buscar parcela ou genótipo</label><input id="row-search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Ex.: 39701 ou WBC…" /></div></div>
             {selectedMetrics.length === 0 ? <div className="table-message"><strong>Escolha pelo menos uma coluna de valores.</strong><span>Use a lista à esquerda para montar a tabela.</span></div> : resultRows.length === 0 ? <div className="table-message"><strong>Nenhuma nota encontrada com esses filtros.</strong><span>Tente outro tipo de observação ou desative “Somente linhas com nota”.</span></div> : (
               <><div className="table-wrap"><table><thead><tr>{resultHeaders.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{pageRows.map((row, rowIndex) => <tr key={`${currentPage}-${rowIndex}`}>{resultHeaders.map((header) => <td key={header} className={isFilled(row[header]) ? '' : 'empty-cell'}>{displayValue(row[header]) || '—'}</td>)}</tr>)}</tbody></table></div>
