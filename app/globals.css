@@ -25,6 +25,7 @@ button { color: inherit; }
 .drop-copy { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .drop-copy strong { font: 600 17px/1.25 Georgia, serif; overflow: hidden; text-overflow: ellipsis; }
 .drop-copy span { font-size: 12px; color: var(--ink-soft); }
+.file-type-badge { align-self: flex-start; margin-top: 2px; border-radius: 100px; background: #edf3d3; color: var(--green-dark); padding: 5px 8px; font-size: 9px; font-style: normal; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
 .dropzone .button { margin-left: auto; }
 .button { border: 0; border-radius: 9px; padding: 11px 16px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: .18s ease; }
 .button:hover:not(:disabled) { transform: translateY(-1px); }
@@ -47,6 +48,10 @@ button { color: inherit; }
 .section-heading, .filter-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .text-button, .quick-actions button { border: 0; background: transparent; color: var(--green); font-size: 11px; font-weight: 700; padding: 0; cursor: pointer; }
 .filter-group { padding: 26px 0; border-bottom: 1px solid var(--line); }
+.dataset-card { margin-top: 24px; padding: 17px; border: 1px solid #cad5c8; border-radius: 11px; background: #eef2e7; }
+.dataset-card span { display: block; color: var(--ink-soft); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.dataset-card strong { display: block; margin-top: 5px; font: 600 22px Georgia, serif; }
+.dataset-card p { margin: 8px 0 0; color: var(--ink-soft); font-size: 10px; line-height: 1.5; }
 .filter-title label, .toggle-row strong { font-size: 12px; font-weight: 700; }
 .filter-title > span { color: var(--ink-soft); font-size: 11px; }
 .type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; max-height: 250px; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }

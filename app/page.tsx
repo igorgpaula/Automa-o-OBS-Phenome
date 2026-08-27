@@ -9,14 +9,17 @@ type ViewMode = 'observacoes' | 'parcelas' | 'repeticoes';
 
 const IDENTITY_ALIASES = {
   observation: ['observation name', 'observation', 'observacao', 'observação'],
-  plot: ['origin', 'plot', 'plot id', 'parcela'],
+  plot: ['origin', 'plot name', 'plot', 'plot id', 'parcela'],
   name: ['name', 'genotype', 'genotipo', 'genótipo'],
   pedigree: ['pedigree'],
   history: ['selection history', 'historico de selecao', 'histórico de seleção'],
   block: ['block', 'bloco'],
+  feid: ['feid'],
+  entryCode: ['entry code', 'entrycode'],
+  row: ['row', 'linha'],
+  column: ['column', 'coluna'],
+  discarded: ['is discarded', 'discarded', 'descartado'],
 };
-
-const REQUIRED_IDENTIFIERS = ['Name', 'Pedigree', 'Selection history', 'Origin', 'Block'];
 
 function normalize(value: string) {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -84,12 +87,19 @@ export default function Home() {
     pedigree: findHeader(headers, IDENTITY_ALIASES.pedigree),
     history: findHeader(headers, IDENTITY_ALIASES.history),
     block: findHeader(headers, IDENTITY_ALIASES.block),
+    feid: findHeader(headers, IDENTITY_ALIASES.feid),
+    entryCode: findHeader(headers, IDENTITY_ALIASES.entryCode),
+    row: findHeader(headers, IDENTITY_ALIASES.row),
+    column: findHeader(headers, IDENTITY_ALIASES.column),
+    discarded: findHeader(headers, IDENTITY_ALIASES.discarded),
   }), [headers]);
 
   const identityColumns = useMemo(() => {
-    const preferred = [columnMap.name, columnMap.pedigree, columnMap.history, columnMap.plot, columnMap.block, columnMap.observation];
+    const preferred = [columnMap.feid, columnMap.name, columnMap.pedigree, columnMap.history, columnMap.entryCode, columnMap.plot, columnMap.row, columnMap.column, columnMap.block, columnMap.discarded, columnMap.observation];
     return preferred.filter((column): column is string => Boolean(column));
   }, [columnMap]);
+
+  const isPlotDataset = rows.length > 0 && !columnMap.observation && Boolean(columnMap.feid && columnMap.entryCode);
 
   const metricColumns = useMemo(() => {
     const identitySet = new Set([...identityColumns, 'Evaluation date', 'Evaluator'].map(normalize));
@@ -124,7 +134,7 @@ export default function Home() {
     for (const metric of metricColumns) counts.set(metric, 0);
     for (const row of rows) {
       const type = columnMap.observation ? String(row[columnMap.observation] ?? '').trim() : '';
-      if (!typeSet.has(type)) continue;
+      if (columnMap.observation && !typeSet.has(type)) continue;
       for (const metric of metricColumns) if (isFilled(row[metric])) counts.set(metric, (counts.get(metric) ?? 0) + 1);
     }
     return counts;
@@ -134,7 +144,7 @@ export default function Home() {
     const typeSet = new Set(selectedTypes);
     return rows.filter((row) => {
       const type = columnMap.observation ? String(row[columnMap.observation] ?? '').trim() : '';
-      if (!typeSet.has(type)) return false;
+      if (columnMap.observation && !typeSet.has(type)) return false;
       if (onlyWithValues && selectedMetrics.length && !selectedMetrics.some((metric) => isFilled(row[metric]))) return false;
       return true;
     });
@@ -159,7 +169,7 @@ export default function Home() {
   }, [filteredSourceRows, columnMap.block]);
 
   const repetitionRows = useMemo<DataRow[]>(() => {
-    if (!columnMap.name || !columnMap.block || !columnMap.observation) return [];
+    if (!columnMap.name || !columnMap.block) return [];
     type RepetitionGroup = { output: DataRow; valuesByBlock: Map<string, CellValue[]> };
     const groups = new Map<string, RepetitionGroup>();
     const baseColumns = [columnMap.name, columnMap.pedigree, columnMap.history, columnMap.observation]
@@ -276,9 +286,23 @@ export default function Home() {
       const rawHeaders = (matrix[0] ?? []).map((value, index) => String(value || `Coluna ${index + 1}`).trim());
       const observationColumn = findHeader(rawHeaders, IDENTITY_ALIASES.observation);
       const plotColumn = findHeader(rawHeaders, IDENTITY_ALIASES.plot);
-      const missingIdentifiers = REQUIRED_IDENTIFIERS.filter((required) => !rawHeaders.some((header) => normalize(header) === normalize(required)));
-      if (!observationColumn || !plotColumn || missingIdentifiers.length) {
-        const missing = [...missingIdentifiers, ...(!observationColumn ? ['Observation name'] : [])];
+      const nameColumn = findHeader(rawHeaders, IDENTITY_ALIASES.name);
+      const pedigreeColumn = findHeader(rawHeaders, IDENTITY_ALIASES.pedigree);
+      const historyColumn = findHeader(rawHeaders, IDENTITY_ALIASES.history);
+      const blockColumn = findHeader(rawHeaders, IDENTITY_ALIASES.block);
+      const feidColumn = findHeader(rawHeaders, IDENTITY_ALIASES.feid);
+      const entryCodeColumn = findHeader(rawHeaders, IDENTITY_ALIASES.entryCode);
+      const isObservationsFile = Boolean(observationColumn);
+      const isPlotsFile = !observationColumn && Boolean(feidColumn && entryCodeColumn);
+      const missing = [
+        ...(!nameColumn ? ['Name'] : []),
+        ...(!pedigreeColumn ? ['Pedigree'] : []),
+        ...(!historyColumn ? ['Selection history'] : []),
+        ...(!plotColumn ? ['Origin ou Plot name'] : []),
+        ...(!blockColumn ? ['Block'] : []),
+        ...(!isObservationsFile && !isPlotsFile ? ['Observation name ou FEID + Entry code'] : []),
+      ];
+      if (missing.length) {
         throw new Error(`Não encontrei as colunas obrigatórias: ${missing.join(', ')}. Confira os cabeçalhos da extração.`);
       }
       const parsedRows = matrix.slice(1).filter((row) => row.some(isFilled)).map((values) => Object.fromEntries(rawHeaders.map((header, index) => [header, values[index] ?? ''])) as DataRow);
@@ -286,7 +310,7 @@ export default function Home() {
       const fixedColumns = new Set([...Object.values(IDENTITY_ALIASES).flat(), 'evaluation date', 'evaluator']);
       const metrics = rawHeaders.filter((header) => !fixedColumns.has(normalize(header)));
       const populatedMetrics = metrics.filter((metric) => parsedRows.some((row) => isFilled(row[metric])));
-      const populatedTypes = types.filter((type) => parsedRows.some((row) => String(row[observationColumn] ?? '').trim() === type && metrics.some((metric) => isFilled(row[metric]))));
+      const populatedTypes = observationColumn ? types.filter((type) => parsedRows.some((row) => String(row[observationColumn] ?? '').trim() === type && metrics.some((metric) => isFilled(row[metric])))) : [];
       setFileName(file.name);
       setSheetName(firstSheet);
       setHeaders(rawHeaders);
@@ -351,7 +375,7 @@ export default function Home() {
     const stem = safeFileStem(fileName) || 'phenome';
     if (format === 'xlsx') {
       const workbook = XLSX.utils.book_new();
-      const exportSheetName = mode === 'parcelas' ? 'Por parcela' : mode === 'repeticoes' ? 'Repetições' : 'Observações';
+      const exportSheetName = mode === 'parcelas' ? 'Por parcela' : mode === 'repeticoes' ? 'Repetições' : isPlotDataset ? 'Plots' : 'Observações';
       XLSX.utils.book_append_sheet(workbook, sheet, exportSheetName);
       XLSX.writeFile(workbook, `${stem}_filtrado.xlsx`);
     } else {
@@ -378,11 +402,11 @@ export default function Home() {
       </header>
 
       <section className="intro">
-        <div><span className="step-label">01 · Importar</span><h2>Transforme sua extração em uma tabela pronta para análise.</h2><p>O app usa Name, Pedigree, Selection history, Origin e Block como identificadores da parcela e cria os filtros a partir dos valores encontrados em Observation name.</p></div>
+        <div><span className="step-label">01 · Importar</span><h2>Transforme sua extração em uma tabela pronta para análise.</h2><p>O app reconhece automaticamente extrações de Observations ou Plots, identifica as colunas estruturais e cria os filtros adequados para cada formato.</p></div>
         <div className={`dropzone ${dragging ? 'is-dragging' : ''} ${rows.length ? 'has-file' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={handleDrop}>
           <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleInput} aria-label="Selecionar arquivo do Phenome" />
           <div className="file-icon" aria-hidden="true">XLS</div>
-          <div className="drop-copy"><strong>{loading ? 'Lendo a planilha…' : rows.length ? fileName : 'Arraste o arquivo para cá'}</strong><span>{rows.length ? `${rows.length.toLocaleString('pt-BR')} registros · aba ${sheetName}` : 'ou selecione um arquivo .xlsx, .xls ou .csv'}</span></div>
+          <div className="drop-copy"><strong>{loading ? 'Lendo a planilha…' : rows.length ? fileName : 'Arraste o arquivo para cá'}</strong><span>{rows.length ? `${rows.length.toLocaleString('pt-BR')} registros · aba ${sheetName}` : 'ou selecione um arquivo .xlsx, .xls ou .csv'}</span>{rows.length > 0 && <em className="file-type-badge">{isPlotDataset ? 'Extração detectada · Plots' : 'Extração detectada · Observations'}</em>}</div>
           <button className="button primary" type="button" onClick={() => inputRef.current?.click()} disabled={loading}>{rows.length ? 'Trocar arquivo' : 'Selecionar arquivo'}</button>
         </div>
         {error && <p className="error-message" role="alert">{error}</p>}
@@ -390,10 +414,10 @@ export default function Home() {
 
       {!rows.length ? (
         <section className="empty-preview" aria-label="Como funciona">
-          <div className="preview-head"><span className="step-label">02 · Filtrar e transformar</span><span className="preview-pill">Segmentação criada automaticamente por Observation name</span></div>
+          <div className="preview-head"><span className="step-label">02 · Filtrar e transformar</span><span className="preview-pill">Formato identificado automaticamente no upload</span></div>
           <div className="preview-grid">
-            <article><span>1</span><h3>Importe</h3><p>A ferramenta identifica os valores existentes em Observation name, sejam códigos, textos ou números.</p></article>
-            <article><span>2</span><h3>Segmente</h3><p>Escolha qualquer combinação de valores e notas, sem depender de uma lista predefinida.</p></article>
+            <article><span>1</span><h3>Importe</h3><p>A ferramenta diferencia Observations de Plots pelos cabeçalhos da própria extração.</p></article>
+            <article><span>2</span><h3>Segmente</h3><p>Em Observations, filtre os tipos encontrados; em Plots, trabalhe diretamente com uma linha por parcela.</p></article>
             <article><span>3</span><h3>Exporte</h3><p>Baixe em Excel ou CSV por observação, por parcela ou comparando as repetições de cada genótipo.</p></article>
           </div>
         </section>
@@ -401,7 +425,7 @@ export default function Home() {
         <section className="workspace">
           <aside className="filters">
             <div className="section-heading"><span className="step-label">02 · Configurar</span><button className="text-button" type="button" onClick={() => { setSelectedTypes(selectableTypes); setSelectedMetrics(metricColumns.filter((metric) => rows.some((row) => isFilled(row[metric])))); setColumnFilters({}); setTypeSearch(''); setPage(1); }}>Restaurar</button></div>
-            <div className="filter-group">
+            {columnMap.observation ? <div className="filter-group">
               <div className="filter-title"><label>Segmentação · Observation name</label><span>{selectedTypes.length}/{selectableTypes.length} ativas</span></div>
               {availableTypes.length > 8 && <input id="type-search" className="search-input" value={typeSearch} onChange={(event) => setTypeSearch(event.target.value)} placeholder="Buscar valor…" />}
               <div className="quick-actions"><button type="button" onClick={() => { setSelectedTypes(selectableTypes); setColumnFilters({}); setPage(1); }}>Todos</button><button type="button" onClick={() => { setSelectedTypes([]); setColumnFilters({}); setPage(1); }}>Limpar</button><span className="detected-values">{availableTypes.length} valores detectados</span></div>
@@ -410,7 +434,7 @@ export default function Home() {
                 const enabled = stats.filled > 0;
                 return <button key={type} type="button" className={`type-chip ${selectedTypes.includes(type) ? 'selected' : ''}`} onClick={() => toggleType(type)} disabled={!enabled} aria-pressed={selectedTypes.includes(type)} title={`${stats.filled.toLocaleString('pt-BR')} com dados de ${stats.total.toLocaleString('pt-BR')} registros`}><span>{type}</span><small>{stats.filled.toLocaleString('pt-BR')}/{stats.total.toLocaleString('pt-BR')}</small></button>;
               })}</div>
-            </div>
+            </div> : <div className="dataset-card"><span>Formato detectado</span><strong>Plots</strong><p>Cada linha representa um plot. FEID, Name, Pedigree, Selection history, Entry code, Plot name e Block são tratados como identificadores.</p></div>}
             <div className="filter-group">
               <div className="filter-title"><label htmlFor="metric-search">Colunas de valores</label><span>{selectedMetrics.length}/{metricColumns.length}</span></div>
               <input id="metric-search" className="search-input" value={metricSearch} onChange={(event) => setMetricSearch(event.target.value)} placeholder="Buscar coluna…" />
@@ -423,17 +447,17 @@ export default function Home() {
           </aside>
 
           <div className="results">
-            <div className="results-toolbar"><div><span className="step-label">03 · Visualizar e exportar</span><h2>Tabela transformada</h2></div><div className="view-switch" aria-label="Formato da tabela"><button type="button" className={mode === 'observacoes' ? 'active' : ''} onClick={() => switchMode('observacoes')}>Por observação</button><button type="button" className={mode === 'parcelas' ? 'active' : ''} onClick={() => switchMode('parcelas')}>Por parcela</button><button type="button" className={mode === 'repeticoes' ? 'active' : ''} onClick={() => switchMode('repeticoes')}>Por repetições</button></div></div>
-            {mode === 'repeticoes' && <p className="view-description"><strong>{availableBlocks.length} {availableBlocks.length === 1 ? 'Block detectado' : 'Blocks detectados'}.</strong> Cada linha combina genótipo, observação e variável; a média considera os Blocks com valores numéricos disponíveis.</p>}
-            <div className="stats-row"><div><span>Parcelas na base</span><strong>{totalPlots.toLocaleString('pt-BR')}</strong></div><div><span>Linhas no resultado</span><strong>{resultRows.length.toLocaleString('pt-BR')}</strong></div><div><span>Notas encontradas</span><strong>{noteCount.toLocaleString('pt-BR')}</strong></div></div>
-            {selectedMetrics.length === 0 ? <div className="table-message"><strong>Escolha pelo menos uma coluna de valores.</strong><span>Use a lista à esquerda para montar a tabela.</span></div> : transformedRows.length === 0 ? <div className="table-message"><strong>Nenhuma nota encontrada com esses filtros.</strong><span>Tente outro tipo de observação ou desative “Somente linhas com nota”.</span></div> : (
+            <div className="results-toolbar"><div><span className="step-label">03 · Visualizar e exportar</span><h2>{isPlotDataset ? 'Tabela de plots' : 'Tabela transformada'}</h2></div><div className="view-switch" aria-label="Formato da tabela"><button type="button" className={mode === 'observacoes' ? 'active' : ''} onClick={() => switchMode('observacoes')}>{isPlotDataset ? 'Por plot' : 'Por observação'}</button>{!isPlotDataset && <button type="button" className={mode === 'parcelas' ? 'active' : ''} onClick={() => switchMode('parcelas')}>Por parcela</button>}<button type="button" className={mode === 'repeticoes' ? 'active' : ''} onClick={() => switchMode('repeticoes')}>Por repetições</button></div></div>
+            {mode === 'repeticoes' && <p className="view-description"><strong>{availableBlocks.length} {availableBlocks.length === 1 ? 'Block detectado' : 'Blocks detectados'}.</strong> Cada linha combina genótipo{columnMap.observation ? ', observação' : ''} e variável; a média considera os Blocks com valores numéricos disponíveis.</p>}
+            <div className="stats-row"><div><span>{isPlotDataset ? 'Plots na base' : 'Parcelas na base'}</span><strong>{totalPlots.toLocaleString('pt-BR')}</strong></div><div><span>Linhas no resultado</span><strong>{resultRows.length.toLocaleString('pt-BR')}</strong></div><div><span>Notas encontradas</span><strong>{noteCount.toLocaleString('pt-BR')}</strong></div></div>
+            {selectedMetrics.length === 0 ? <div className="table-message"><strong>Escolha pelo menos uma coluna de valores.</strong><span>Use a lista à esquerda para montar a tabela.</span></div> : transformedRows.length === 0 ? <div className="table-message"><strong>Nenhuma nota encontrada com esses filtros.</strong><span>{columnMap.observation ? 'Tente outro tipo de observação ou desative “Somente linhas com nota”.' : 'Tente outras colunas ou desative “Somente linhas com nota”.'}</span></div> : (
               <><div className="table-wrap"><table><thead><tr className="header-row">{resultHeaders.map((header) => <th key={header}>{header}</th>)}</tr><tr className="filter-row">{resultHeaders.map((header) => <th key={`filter-${header}`}><input className="column-filter" value={columnFilters[header] ?? ''} onChange={(event) => updateColumnFilter(header, event.target.value)} placeholder="Filtrar…" aria-label={`Filtrar coluna ${header}`} /></th>)}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, rowIndex) => <tr key={`${currentPage}-${rowIndex}`}>{resultHeaders.map((header) => <td key={header} className={isFilled(row[header]) ? '' : 'empty-cell'}>{displayValue(row[header]) || '—'}</td>)}</tr>) : <tr><td className="no-filter-results" colSpan={resultHeaders.length}>Nenhuma linha corresponde aos filtros das colunas.</td></tr>}</tbody></table></div>
               <div className="table-footer"><div className="table-summary"><span>Mostrando {resultRows.length ? ((currentPage - 1) * pageSize + 1).toLocaleString('pt-BR') : '0'}–{resultRows.length ? Math.min(currentPage * pageSize, resultRows.length).toLocaleString('pt-BR') : '0'} de {resultRows.length.toLocaleString('pt-BR')}</span>{activeColumnFilterCount > 0 && <button className="text-button" type="button" onClick={() => { setColumnFilters({}); setPage(1); }}>Limpar {activeColumnFilterCount} {activeColumnFilterCount === 1 ? 'filtro' : 'filtros'}</button>}</div><div className="pagination"><button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button><span>{currentPage} / {totalPages}</span><button type="button" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Próxima</button></div><div className="export-actions"><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
             )}
           </div>
         </section>
       )}
-      <footer><span>Phenome OBS</span><p>Ferramenta local para organizar observações de campo.</p></footer>
+      <footer><span>Phenome OBS</span><p>Ferramenta local para organizar extrações de Observations e Plots.</p></footer>
     </main>
   );
 }
