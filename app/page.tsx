@@ -69,7 +69,7 @@ export default function Home() {
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([]);
   const [mode, setMode] = useState<ViewMode>('observacoes');
   const [onlyWithValues, setOnlyWithValues] = useState(true);
-  const [search, setSearch] = useState('');
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [metricSearch, setMetricSearch] = useState('');
   const [typeSearch, setTypeSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -102,15 +102,21 @@ export default function Home() {
     return found.sort(naturalCompare);
   }, [rows, columnMap.observation]);
 
-  const typeCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    if (!columnMap.observation) return counts;
+  const typeStats = useMemo(() => {
+    const stats = new Map<string, { filled: number; total: number }>();
+    if (!columnMap.observation) return stats;
     for (const row of rows) {
       const value = String(row[columnMap.observation] ?? '').trim();
-      if (value) counts.set(value, (counts.get(value) ?? 0) + 1);
+      if (!value) continue;
+      const current = stats.get(value) ?? { filled: 0, total: 0 };
+      current.total += 1;
+      if (metricColumns.some((metric) => isFilled(row[metric]))) current.filled += 1;
+      stats.set(value, current);
     }
-    return counts;
-  }, [rows, columnMap.observation]);
+    return stats;
+  }, [rows, metricColumns, columnMap.observation]);
+
+  const selectableTypes = useMemo(() => availableTypes.filter((type) => (typeStats.get(type)?.filled ?? 0) > 0), [availableTypes, typeStats]);
 
   const metricCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -126,20 +132,13 @@ export default function Home() {
 
   const filteredSourceRows = useMemo(() => {
     const typeSet = new Set(selectedTypes);
-    const query = normalize(search);
     return rows.filter((row) => {
       const type = columnMap.observation ? String(row[columnMap.observation] ?? '').trim() : '';
       if (!typeSet.has(type)) return false;
       if (onlyWithValues && selectedMetrics.length && !selectedMetrics.some((metric) => isFilled(row[metric]))) return false;
-      if (query) {
-        const searchable = [columnMap.plot, columnMap.name, columnMap.pedigree]
-          .filter((column): column is string => Boolean(column))
-          .map((column) => String(row[column] ?? '')).join(' ');
-        if (!normalize(searchable).includes(query)) return false;
-      }
       return true;
     });
-  }, [rows, selectedTypes, selectedMetrics, onlyWithValues, search, columnMap]);
+  }, [rows, selectedTypes, selectedMetrics, onlyWithValues, columnMap.observation]);
 
   const pivotMetricColumns = useMemo(() => {
     if (!columnMap.observation) return [];
@@ -208,7 +207,7 @@ export default function Home() {
     });
   }, [filteredSourceRows, selectedMetrics, onlyWithValues, availableBlocks, columnMap]);
 
-  const resultRows = useMemo<DataRow[]>(() => {
+  const transformedRows = useMemo<DataRow[]>(() => {
     if (mode === 'observacoes') {
       return filteredSourceRows.map((row) => {
         const output: DataRow = {};
@@ -247,6 +246,14 @@ export default function Home() {
     return [...identityColumns.filter((column) => column !== columnMap.observation), ...pivotMetricColumns];
   }, [mode, identityColumns, selectedMetrics, pivotMetricColumns, availableBlocks, columnMap]);
 
+  const activeColumnFilterCount = Object.values(columnFilters).filter((value) => value.trim()).length;
+
+  const resultRows = useMemo(() => {
+    const activeFilters = Object.entries(columnFilters).filter(([, value]) => value.trim());
+    if (!activeFilters.length) return transformedRows;
+    return transformedRows.filter((row) => activeFilters.every(([header, filter]) => normalize(displayValue(row[header])).includes(normalize(filter))));
+  }, [transformedRows, columnFilters]);
+
   const totalPlots = useMemo(() => columnMap.plot
     ? new Set(rows.map((row) => String(row[columnMap.plot!] ?? '')).filter(Boolean)).size : 0,
   [rows, columnMap.plot]);
@@ -279,15 +286,16 @@ export default function Home() {
       const fixedColumns = new Set([...Object.values(IDENTITY_ALIASES).flat(), 'evaluation date', 'evaluator']);
       const metrics = rawHeaders.filter((header) => !fixedColumns.has(normalize(header)));
       const populatedMetrics = metrics.filter((metric) => parsedRows.some((row) => isFilled(row[metric])));
+      const populatedTypes = types.filter((type) => parsedRows.some((row) => String(row[observationColumn] ?? '').trim() === type && metrics.some((metric) => isFilled(row[metric]))));
       setFileName(file.name);
       setSheetName(firstSheet);
       setHeaders(rawHeaders);
       setRows(parsedRows);
-      setSelectedTypes(types);
+      setSelectedTypes(populatedTypes);
       setSelectedMetrics(populatedMetrics);
       setMode('observacoes');
       setOnlyWithValues(true);
-      setSearch('');
+      setColumnFilters({});
       setMetricSearch('');
       setTypeSearch('');
       setPage(1);
@@ -295,6 +303,7 @@ export default function Home() {
       setError(caught instanceof Error ? caught.message : 'Não foi possível ler esse arquivo.');
       setRows([]);
       setHeaders([]);
+      setColumnFilters({});
     } finally {
       setLoading(false);
     }
@@ -315,11 +324,24 @@ export default function Home() {
 
   function toggleType(type: string) {
     setSelectedTypes((current) => current.includes(type) ? current.filter((item) => item !== type) : [...current, type]);
+    setColumnFilters({});
     setPage(1);
   }
 
   function toggleMetric(metric: string) {
     setSelectedMetrics((current) => current.includes(metric) ? current.filter((item) => item !== metric) : [...current, metric]);
+    setColumnFilters({});
+    setPage(1);
+  }
+
+  function updateColumnFilter(header: string, value: string) {
+    setColumnFilters((current) => ({ ...current, [header]: value }));
+    setPage(1);
+  }
+
+  function switchMode(nextMode: ViewMode) {
+    setMode(nextMode);
+    setColumnFilters({});
     setPage(1);
   }
 
@@ -378,31 +400,35 @@ export default function Home() {
       ) : (
         <section className="workspace">
           <aside className="filters">
-            <div className="section-heading"><span className="step-label">02 · Configurar</span><button className="text-button" type="button" onClick={() => { setSelectedTypes(availableTypes); setSelectedMetrics(metricColumns.filter((metric) => (metricCounts.get(metric) ?? 0) > 0)); setSearch(''); setTypeSearch(''); }}>Restaurar</button></div>
+            <div className="section-heading"><span className="step-label">02 · Configurar</span><button className="text-button" type="button" onClick={() => { setSelectedTypes(selectableTypes); setSelectedMetrics(metricColumns.filter((metric) => rows.some((row) => isFilled(row[metric])))); setColumnFilters({}); setTypeSearch(''); setPage(1); }}>Restaurar</button></div>
             <div className="filter-group">
-              <div className="filter-title"><label>Segmentação · Observation name</label><span>{selectedTypes.length}/{availableTypes.length}</span></div>
+              <div className="filter-title"><label>Segmentação · Observation name</label><span>{selectedTypes.length}/{selectableTypes.length} ativas</span></div>
               {availableTypes.length > 8 && <input id="type-search" className="search-input" value={typeSearch} onChange={(event) => setTypeSearch(event.target.value)} placeholder="Buscar valor…" />}
-              <div className="quick-actions"><button type="button" onClick={() => setSelectedTypes(availableTypes)}>Todos</button><button type="button" onClick={() => setSelectedTypes([])}>Limpar</button><span className="detected-values">{availableTypes.length} valores detectados</span></div>
-              <div className="type-grid">{visibleTypeOptions.map((type) => <button key={type} type="button" className={`type-chip ${selectedTypes.includes(type) ? 'selected' : ''}`} onClick={() => toggleType(type)} aria-pressed={selectedTypes.includes(type)} title={type}><span>{type}</span><small>{(typeCounts.get(type) ?? 0).toLocaleString('pt-BR')}</small></button>)}</div>
+              <div className="quick-actions"><button type="button" onClick={() => { setSelectedTypes(selectableTypes); setColumnFilters({}); setPage(1); }}>Todos</button><button type="button" onClick={() => { setSelectedTypes([]); setColumnFilters({}); setPage(1); }}>Limpar</button><span className="detected-values">{availableTypes.length} valores detectados</span></div>
+              <div className="type-grid">{visibleTypeOptions.map((type) => {
+                const stats = typeStats.get(type) ?? { filled: 0, total: 0 };
+                const enabled = stats.filled > 0;
+                return <button key={type} type="button" className={`type-chip ${selectedTypes.includes(type) ? 'selected' : ''}`} onClick={() => toggleType(type)} disabled={!enabled} aria-pressed={selectedTypes.includes(type)} title={`${stats.filled.toLocaleString('pt-BR')} com dados de ${stats.total.toLocaleString('pt-BR')} registros`}><span>{type}</span><small>{stats.filled.toLocaleString('pt-BR')}/{stats.total.toLocaleString('pt-BR')}</small></button>;
+              })}</div>
             </div>
             <div className="filter-group">
               <div className="filter-title"><label htmlFor="metric-search">Colunas de valores</label><span>{selectedMetrics.length}/{metricColumns.length}</span></div>
               <input id="metric-search" className="search-input" value={metricSearch} onChange={(event) => setMetricSearch(event.target.value)} placeholder="Buscar coluna…" />
-              <div className="quick-actions"><button type="button" onClick={() => setSelectedMetrics(metricColumns.filter((metric) => (metricCounts.get(metric) ?? 0) > 0))}>Com dados</button><button type="button" onClick={() => setSelectedMetrics(metricColumns)}>Todas</button><button type="button" onClick={() => setSelectedMetrics([])}>Limpar</button></div>
+              <div className="quick-actions"><button type="button" onClick={() => { setSelectedMetrics(metricColumns.filter((metric) => (metricCounts.get(metric) ?? 0) > 0)); setColumnFilters({}); setPage(1); }}>Com dados</button><button type="button" onClick={() => { setSelectedMetrics(metricColumns); setColumnFilters({}); setPage(1); }}>Todas</button><button type="button" onClick={() => { setSelectedMetrics([]); setColumnFilters({}); setPage(1); }}>Limpar</button></div>
               <div className="metric-list">{visibleMetricOptions.map((metric) => (
                 <label key={metric} className="metric-option"><input type="checkbox" checked={selectedMetrics.includes(metric)} onChange={() => toggleMetric(metric)} /><span className="custom-check" aria-hidden="true">✓</span><span className="metric-name">{metric}</span><span className={`count-badge ${(metricCounts.get(metric) ?? 0) > 0 ? 'has-count' : ''}`}>{(metricCounts.get(metric) ?? 0).toLocaleString('pt-BR')}</span></label>
               ))}</div>
             </div>
-            <label className="toggle-row"><span><strong>Somente linhas com nota</strong><small>Oculta registros vazios nas colunas escolhidas</small></span><input type="checkbox" checked={onlyWithValues} onChange={(event) => { setOnlyWithValues(event.target.checked); setPage(1); }} /><span className="toggle" aria-hidden="true" /></label>
+            <label className="toggle-row"><span><strong>Somente linhas com nota</strong><small>Oculta registros vazios nas colunas escolhidas</small></span><input type="checkbox" checked={onlyWithValues} onChange={(event) => { setOnlyWithValues(event.target.checked); setColumnFilters({}); setPage(1); }} /><span className="toggle" aria-hidden="true" /></label>
           </aside>
 
           <div className="results">
-            <div className="results-toolbar"><div><span className="step-label">03 · Visualizar e exportar</span><h2>Tabela transformada</h2></div><div className="view-switch" aria-label="Formato da tabela"><button type="button" className={mode === 'observacoes' ? 'active' : ''} onClick={() => { setMode('observacoes'); setPage(1); }}>Por observação</button><button type="button" className={mode === 'parcelas' ? 'active' : ''} onClick={() => { setMode('parcelas'); setPage(1); }}>Por parcela</button><button type="button" className={mode === 'repeticoes' ? 'active' : ''} onClick={() => { setMode('repeticoes'); setPage(1); }}>Por repetições</button></div></div>
+            <div className="results-toolbar"><div><span className="step-label">03 · Visualizar e exportar</span><h2>Tabela transformada</h2></div><div className="view-switch" aria-label="Formato da tabela"><button type="button" className={mode === 'observacoes' ? 'active' : ''} onClick={() => switchMode('observacoes')}>Por observação</button><button type="button" className={mode === 'parcelas' ? 'active' : ''} onClick={() => switchMode('parcelas')}>Por parcela</button><button type="button" className={mode === 'repeticoes' ? 'active' : ''} onClick={() => switchMode('repeticoes')}>Por repetições</button></div></div>
             {mode === 'repeticoes' && <p className="view-description"><strong>{availableBlocks.length} {availableBlocks.length === 1 ? 'Block detectado' : 'Blocks detectados'}.</strong> Cada linha combina genótipo, observação e variável; a média considera os Blocks com valores numéricos disponíveis.</p>}
-            <div className="stats-row"><div><span>Parcelas na base</span><strong>{totalPlots.toLocaleString('pt-BR')}</strong></div><div><span>Linhas no resultado</span><strong>{resultRows.length.toLocaleString('pt-BR')}</strong></div><div><span>Notas encontradas</span><strong>{noteCount.toLocaleString('pt-BR')}</strong></div><div className="search-box"><label htmlFor="row-search">Buscar parcela ou genótipo</label><input id="row-search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Ex.: 39701 ou WBC…" /></div></div>
-            {selectedMetrics.length === 0 ? <div className="table-message"><strong>Escolha pelo menos uma coluna de valores.</strong><span>Use a lista à esquerda para montar a tabela.</span></div> : resultRows.length === 0 ? <div className="table-message"><strong>Nenhuma nota encontrada com esses filtros.</strong><span>Tente outro tipo de observação ou desative “Somente linhas com nota”.</span></div> : (
-              <><div className="table-wrap"><table><thead><tr>{resultHeaders.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{pageRows.map((row, rowIndex) => <tr key={`${currentPage}-${rowIndex}`}>{resultHeaders.map((header) => <td key={header} className={isFilled(row[header]) ? '' : 'empty-cell'}>{displayValue(row[header]) || '—'}</td>)}</tr>)}</tbody></table></div>
-              <div className="table-footer"><span>Mostrando {((currentPage - 1) * pageSize + 1).toLocaleString('pt-BR')}–{Math.min(currentPage * pageSize, resultRows.length).toLocaleString('pt-BR')} de {resultRows.length.toLocaleString('pt-BR')}</span><div className="pagination"><button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button><span>{currentPage} / {totalPages}</span><button type="button" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Próxima</button></div><div className="export-actions"><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
+            <div className="stats-row"><div><span>Parcelas na base</span><strong>{totalPlots.toLocaleString('pt-BR')}</strong></div><div><span>Linhas no resultado</span><strong>{resultRows.length.toLocaleString('pt-BR')}</strong></div><div><span>Notas encontradas</span><strong>{noteCount.toLocaleString('pt-BR')}</strong></div></div>
+            {selectedMetrics.length === 0 ? <div className="table-message"><strong>Escolha pelo menos uma coluna de valores.</strong><span>Use a lista à esquerda para montar a tabela.</span></div> : transformedRows.length === 0 ? <div className="table-message"><strong>Nenhuma nota encontrada com esses filtros.</strong><span>Tente outro tipo de observação ou desative “Somente linhas com nota”.</span></div> : (
+              <><div className="table-wrap"><table><thead><tr className="header-row">{resultHeaders.map((header) => <th key={header}>{header}</th>)}</tr><tr className="filter-row">{resultHeaders.map((header) => <th key={`filter-${header}`}><input className="column-filter" value={columnFilters[header] ?? ''} onChange={(event) => updateColumnFilter(header, event.target.value)} placeholder="Filtrar…" aria-label={`Filtrar coluna ${header}`} /></th>)}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, rowIndex) => <tr key={`${currentPage}-${rowIndex}`}>{resultHeaders.map((header) => <td key={header} className={isFilled(row[header]) ? '' : 'empty-cell'}>{displayValue(row[header]) || '—'}</td>)}</tr>) : <tr><td className="no-filter-results" colSpan={resultHeaders.length}>Nenhuma linha corresponde aos filtros das colunas.</td></tr>}</tbody></table></div>
+              <div className="table-footer"><div className="table-summary"><span>Mostrando {resultRows.length ? ((currentPage - 1) * pageSize + 1).toLocaleString('pt-BR') : '0'}–{resultRows.length ? Math.min(currentPage * pageSize, resultRows.length).toLocaleString('pt-BR') : '0'} de {resultRows.length.toLocaleString('pt-BR')}</span>{activeColumnFilterCount > 0 && <button className="text-button" type="button" onClick={() => { setColumnFilters({}); setPage(1); }}>Limpar {activeColumnFilterCount} {activeColumnFilterCount === 1 ? 'filtro' : 'filtros'}</button>}</div><div className="pagination"><button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button><span>{currentPage} / {totalPages}</span><button type="button" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Próxima</button></div><div className="export-actions"><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
             )}
           </div>
         </section>
