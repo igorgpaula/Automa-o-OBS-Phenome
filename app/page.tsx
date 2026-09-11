@@ -7,6 +7,7 @@ type CellValue = string | number | boolean | Date | null | undefined;
 type DataRow = Record<string, CellValue>;
 type ViewMode = 'observacoes' | 'parcelas' | 'repeticoes';
 type SortConfig = { header: string; direction: 'asc' | 'desc' } | null;
+type CopyStatus = 'idle' | 'copied' | 'error';
 
 const IDENTITY_ALIASES = {
   observation: ['observation name', 'observation', 'observacao', 'observação'],
@@ -88,7 +89,7 @@ export default function Home() {
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
   const [metricSearch, setMetricSearch] = useState('');
   const [typeSearch, setTypeSearch] = useState('');
-  const [page, setPage] = useState(1);
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle');
   const [loading, setLoading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
@@ -296,10 +297,6 @@ export default function Home() {
   [rows, columnMap.plot]);
 
   const noteCount = useMemo(() => filteredSourceRows.reduce((total, row) => total + selectedMetrics.filter((metric) => isFilled(row[metric])).length, 0), [filteredSourceRows, selectedMetrics]);
-  const pageSize = 50;
-  const totalPages = Math.max(1, Math.ceil(resultRows.length / pageSize));
-  const currentPage = Math.min(page, totalPages);
-  const pageRows = resultRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   async function loadFile(file: File) {
     setLoading(true);
@@ -352,7 +349,7 @@ export default function Home() {
       setSortConfig(null);
       setMetricSearch('');
       setTypeSearch('');
-      setPage(1);
+      setCopyStatus('idle');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Não foi possível ler esse arquivo.');
       setRows([]);
@@ -381,26 +378,26 @@ export default function Home() {
     setSelectedTypes((current) => current.includes(type) ? current.filter((item) => item !== type) : [...current, type]);
     setColumnFilters({});
     setSortConfig(null);
-    setPage(1);
+    setCopyStatus('idle');
   }
 
   function toggleMetric(metric: string) {
     setSelectedMetrics((current) => current.includes(metric) ? current.filter((item) => item !== metric) : [...current, metric]);
     setColumnFilters({});
     setSortConfig(null);
-    setPage(1);
+    setCopyStatus('idle');
   }
 
   function updateColumnFilter(header: string, value: string) {
     setColumnFilters((current) => ({ ...current, [header]: value }));
-    setPage(1);
+    setCopyStatus('idle');
   }
 
   function switchMode(nextMode: ViewMode) {
     setMode(nextMode);
     setColumnFilters({});
     setSortConfig(null);
-    setPage(1);
+    setCopyStatus('idle');
   }
 
   function toggleSort(header: string) {
@@ -409,7 +406,7 @@ export default function Home() {
       if (current.direction === 'asc') return { header, direction: 'desc' };
       return null;
     });
-    setPage(1);
+    setCopyStatus('idle');
   }
 
   function exportData(format: 'xlsx' | 'csv') {
@@ -430,6 +427,39 @@ export default function Home() {
       anchor.download = `${stem}_filtrado.csv`;
       anchor.click();
       URL.revokeObjectURL(url);
+    }
+  }
+
+  async function copyData() {
+    if (!resultRows.length) return;
+    const clipboardRows = [
+      resultHeaders,
+      ...resultRows.map((row) => resultHeaders.map((header) => displayValue(row[header]))),
+    ];
+    const text = clipboardRows
+      .map((row) => row.map((value) => value.replace(/\t/g, ' ').replace(/\r?\n/g, ' ')).join('\t'))
+      .join('\r\n');
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        if (!copied) throw new Error('O navegador não permitiu copiar os dados.');
+      }
+      setCopyStatus('copied');
+      window.setTimeout(() => setCopyStatus('idle'), 2200);
+    } catch {
+      setCopyStatus('error');
+      window.setTimeout(() => setCopyStatus('idle'), 3000);
     }
   }
 
@@ -467,11 +497,11 @@ export default function Home() {
       ) : (
         <section className="workspace">
           <aside className="filters">
-            <div className="section-heading"><span className="step-label">02 · Configurar</span><button className="text-button" type="button" onClick={() => { setSelectedTypes(selectableTypes); setSelectedMetrics(metricColumns.filter((metric) => rows.some((row) => isFilled(row[metric])))); setColumnFilters({}); setSortConfig(null); setTypeSearch(''); setPage(1); }}>Restaurar</button></div>
+            <div className="section-heading"><span className="step-label">02 · Configurar</span><button className="text-button" type="button" onClick={() => { setSelectedTypes(selectableTypes); setSelectedMetrics(metricColumns.filter((metric) => rows.some((row) => isFilled(row[metric])))); setColumnFilters({}); setSortConfig(null); setTypeSearch(''); setCopyStatus('idle'); }}>Restaurar</button></div>
             {columnMap.observation ? <div className="filter-group">
               <div className="filter-title"><label>Segmentação · Observation name</label><span>{selectedTypes.length}/{selectableTypes.length} ativas</span></div>
               {availableTypes.length > 8 && <input id="type-search" className="search-input" value={typeSearch} onChange={(event) => setTypeSearch(event.target.value)} placeholder="Buscar valor…" />}
-              <div className="quick-actions"><button type="button" onClick={() => { setSelectedTypes(selectableTypes); setColumnFilters({}); setSortConfig(null); setPage(1); }}>Todos</button><button type="button" onClick={() => { setSelectedTypes([]); setColumnFilters({}); setSortConfig(null); setPage(1); }}>Limpar</button><span className="detected-values">{availableTypes.length} valores detectados</span></div>
+              <div className="quick-actions"><button type="button" onClick={() => { setSelectedTypes(selectableTypes); setColumnFilters({}); setSortConfig(null); setCopyStatus('idle'); }}>Todos</button><button type="button" onClick={() => { setSelectedTypes([]); setColumnFilters({}); setSortConfig(null); setCopyStatus('idle'); }}>Limpar</button><span className="detected-values">{availableTypes.length} valores detectados</span></div>
               <div className="type-grid">{visibleTypeOptions.map((type) => {
                 const stats = typeStats.get(type) ?? { filled: 0, total: 0 };
                 const enabled = stats.filled > 0;
@@ -481,12 +511,12 @@ export default function Home() {
             <div className="filter-group">
               <div className="filter-title"><label htmlFor="metric-search">Colunas de valores</label><span>{selectedMetrics.length}/{metricColumns.length}</span></div>
               <input id="metric-search" className="search-input" value={metricSearch} onChange={(event) => setMetricSearch(event.target.value)} placeholder="Buscar coluna…" />
-              <div className="quick-actions"><button type="button" onClick={() => { setSelectedMetrics(metricColumns.filter((metric) => (metricCounts.get(metric) ?? 0) > 0)); setColumnFilters({}); setSortConfig(null); setPage(1); }}>Com dados</button><button type="button" onClick={() => { setSelectedMetrics(metricColumns); setColumnFilters({}); setSortConfig(null); setPage(1); }}>Todas</button><button type="button" onClick={() => { setSelectedMetrics([]); setColumnFilters({}); setSortConfig(null); setPage(1); }}>Limpar</button></div>
+              <div className="quick-actions"><button type="button" onClick={() => { setSelectedMetrics(metricColumns.filter((metric) => (metricCounts.get(metric) ?? 0) > 0)); setColumnFilters({}); setSortConfig(null); setCopyStatus('idle'); }}>Com dados</button><button type="button" onClick={() => { setSelectedMetrics(metricColumns); setColumnFilters({}); setSortConfig(null); setCopyStatus('idle'); }}>Todas</button><button type="button" onClick={() => { setSelectedMetrics([]); setColumnFilters({}); setSortConfig(null); setCopyStatus('idle'); }}>Limpar</button></div>
               <div className="metric-list">{visibleMetricOptions.map((metric) => (
                 <label key={metric} className="metric-option"><input type="checkbox" checked={selectedMetrics.includes(metric)} onChange={() => toggleMetric(metric)} /><span className="custom-check" aria-hidden="true">✓</span><span className="metric-name">{metric}</span><span className={`count-badge ${(metricCounts.get(metric) ?? 0) > 0 ? 'has-count' : ''}`}>{(metricCounts.get(metric) ?? 0).toLocaleString('pt-BR')}</span></label>
               ))}</div>
             </div>
-            <label className="toggle-row"><span><strong>Somente linhas com nota</strong><small>Oculta registros vazios nas colunas escolhidas</small></span><input type="checkbox" checked={onlyWithValues} onChange={(event) => { setOnlyWithValues(event.target.checked); setColumnFilters({}); setSortConfig(null); setPage(1); }} /><span className="toggle" aria-hidden="true" /></label>
+            <label className="toggle-row"><span><strong>Somente linhas com nota</strong><small>Oculta registros vazios nas colunas escolhidas</small></span><input type="checkbox" checked={onlyWithValues} onChange={(event) => { setOnlyWithValues(event.target.checked); setColumnFilters({}); setSortConfig(null); setCopyStatus('idle'); }} /><span className="toggle" aria-hidden="true" /></label>
           </aside>
 
           <div className="results">
@@ -498,8 +528,8 @@ export default function Home() {
                 const activeSort = sortConfig?.header === header ? sortConfig.direction : null;
                 const sortLabel = activeSort === 'asc' ? 'Ordem crescente: A–Z ou menor–maior' : activeSort === 'desc' ? 'Ordem decrescente: Z–A ou maior–menor' : 'Ordenar esta coluna';
                 return <th key={header} aria-sort={activeSort === 'asc' ? 'ascending' : activeSort === 'desc' ? 'descending' : 'none'}><div className="th-content"><span>{header}</span><button className={`sort-button ${activeSort ? 'active' : ''}`} type="button" onClick={() => toggleSort(header)} aria-label={`${sortLabel}: ${header}`} title={`${sortLabel}. Clique para alterar.`}>{activeSort === 'asc' ? '↑' : activeSort === 'desc' ? '↓' : '↕'}</button></div></th>;
-              })}</tr><tr className="filter-row">{resultHeaders.map((header) => <th key={`filter-${header}`}><input className="column-filter" value={columnFilters[header] ?? ''} onChange={(event) => updateColumnFilter(header, event.target.value)} placeholder="Filtrar…" aria-label={`Filtrar coluna ${header}`} /></th>)}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, rowIndex) => <tr key={`${currentPage}-${rowIndex}`}>{resultHeaders.map((header) => <td key={header} className={isFilled(row[header]) ? '' : 'empty-cell'}>{displayValue(row[header]) || '—'}</td>)}</tr>) : <tr><td className="no-filter-results" colSpan={resultHeaders.length}>Nenhuma linha corresponde aos filtros das colunas.</td></tr>}</tbody></table></div>
-              <div className="table-footer"><div className="table-summary"><span>Mostrando {resultRows.length ? ((currentPage - 1) * pageSize + 1).toLocaleString('pt-BR') : '0'}–{resultRows.length ? Math.min(currentPage * pageSize, resultRows.length).toLocaleString('pt-BR') : '0'} de {resultRows.length.toLocaleString('pt-BR')}</span>{activeColumnFilterCount > 0 && <button className="text-button" type="button" onClick={() => { setColumnFilters({}); setPage(1); }}>Limpar {activeColumnFilterCount} {activeColumnFilterCount === 1 ? 'filtro' : 'filtros'}</button>}</div><div className="pagination"><button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button><span>{currentPage} / {totalPages}</span><button type="button" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Próxima</button></div><div className="export-actions"><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
+              })}</tr><tr className="filter-row">{resultHeaders.map((header) => <th key={`filter-${header}`}><input className="column-filter" value={columnFilters[header] ?? ''} onChange={(event) => updateColumnFilter(header, event.target.value)} placeholder="Filtrar…" aria-label={`Filtrar coluna ${header}`} /></th>)}</tr></thead><tbody>{resultRows.length ? resultRows.map((row, rowIndex) => <tr key={rowIndex}>{resultHeaders.map((header) => <td key={header} className={isFilled(row[header]) ? '' : 'empty-cell'}>{displayValue(row[header]) || '—'}</td>)}</tr>) : <tr><td className="no-filter-results" colSpan={resultHeaders.length}>Nenhuma linha corresponde aos filtros das colunas.</td></tr>}</tbody></table></div>
+              <div className="table-footer"><div className="table-summary"><span>{resultRows.length.toLocaleString('pt-BR')} {resultRows.length === 1 ? 'linha filtrada' : 'linhas filtradas'}</span>{activeColumnFilterCount > 0 && <button className="text-button" type="button" onClick={() => { setColumnFilters({}); setCopyStatus('idle'); }}>Limpar {activeColumnFilterCount} {activeColumnFilterCount === 1 ? 'filtro' : 'filtros'}</button>}</div><div className="export-actions"><button className={`button secondary copy-button ${copyStatus}`} type="button" onClick={() => void copyData()} disabled={!resultRows.length}>{copyStatus === 'copied' ? 'Dados copiados!' : copyStatus === 'error' ? 'Não foi possível copiar' : 'Copiar dados'}</button><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
             )}
           </div>
         </section>
