@@ -54,7 +54,14 @@ button { color: inherit; }
 .filters { padding: 30px; border-right: 1px solid var(--line); background: #f8f7ef; }
 .section-heading, .filter-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .text-button, .quick-actions button { border: 0; background: transparent; color: var(--green); font-size: 11px; font-weight: 700; padding: 0; cursor: pointer; }
+.quick-actions button:disabled { color: #9a9f96; cursor: not-allowed; }
 .filter-group { padding: 26px 0; border-bottom: 1px solid var(--line); }
+.cascade-hint { margin: 16px 0 0; padding: 10px 12px; border-left: 3px solid var(--lime); background: #f0f2e5; color: var(--ink-soft); font-size: 11px; line-height: 1.45; }
+.cascade-step { position: relative; }
+.cascade-number { display: inline-grid; flex: 0 0 auto; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--lime); color: var(--green-dark); font-size: 10px; font-weight: 800; }
+.filter-title label { display: flex; align-items: center; gap: 8px; }
+.cascade-step > .cascade-number { position: absolute; z-index: 1; top: 26px; left: 0; }
+.cascade-step > .segment-filter .filter-title label { padding-left: 28px; }
 .dataset-card { margin-top: 24px; padding: 17px; border: 1px solid #cad5c8; border-radius: 11px; background: #eef2e7; }
 .dataset-card span { display: block; color: var(--ink-soft); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
 .dataset-card strong { display: block; margin-top: 5px; font: 600 22px Georgia, serif; }
@@ -69,9 +76,13 @@ button { color: inherit; }
 .type-chip:disabled { cursor: not-allowed; opacity: .48; background: #ecece5; color: #7d847d; border-color: #d8dbd4; box-shadow: none; }
 .type-chip:disabled small { opacity: .75; }
 .segment-grid { display: flex; flex-direction: column; gap: 6px; max-height: 190px; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }
-.segment-chip { width: 100%; min-height: 34px; padding: 8px 10px; border: 1px solid #cbd0c4; border-radius: 7px; background: white; color: var(--ink); font-size: 12px; font-weight: 700; line-height: 1.3; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.segment-chip { width: 100%; min-height: 34px; padding: 8px 10px; border: 1px solid #cbd0c4; border-radius: 7px; background: white; color: var(--ink); font-size: 12px; font-weight: 700; line-height: 1.3; text-align: left; cursor: pointer; overflow-wrap: anywhere; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .segment-chip:hover { border-color: #9eb2a0; background: #f5f7ea; }
 .segment-chip.selected { border-color: var(--green); background: var(--green); color: white; box-shadow: inset 0 -2px 0 rgb(0 0 0 / 13%); }
+.segment-chip:disabled { cursor: not-allowed; opacity: .48; background: #ecece5; color: #7d847d; border-color: #d8dbd4; box-shadow: none; }
+.segment-chip:disabled:hover { background: #ecece5; border-color: #d8dbd4; }
+.segment-count { flex: 0 0 auto; min-width: 24px; padding: 2px 6px; border-radius: 100px; background: #eef1e8; color: var(--green-dark); font-size: 10px; text-align: center; font-variant-numeric: tabular-nums; }
+.segment-chip.selected .segment-count { background: rgb(255 255 255 / 17%); color: white; }
 .empty-filter-list { padding: 10px 2px; color: var(--ink-soft); font-size: 12px; }
 .search-input { width: 100%; border: 1px solid #cdd2c8; border-radius: 8px; background: white; padding: 9px 11px; outline: none; font-size: 12px; color: var(--ink); }
 .search-input { margin-top: 12px; }
@@ -81,6 +92,8 @@ button { color: inherit; }
 .metric-list { max-height: 330px; overflow: auto; padding-right: 5px; scrollbar-width: thin; }
 .metric-option { min-height: 34px; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: center; cursor: pointer; font-size: 11px; border-radius: 6px; padding: 4px; }
 .metric-option:hover { background: #eceee3; }
+.metric-option.disabled { color: #8f958d; cursor: not-allowed; opacity: .58; }
+.metric-option.disabled:hover { background: transparent; }
 .metric-option input { position: absolute; opacity: 0; pointer-events: none; }
 .custom-check { width: 16px; height: 16px; border: 1px solid #b8bfb5; border-radius: 4px; color: transparent; display: grid; place-items: center; font-size: 10px; }
 .metric-option input:checked + .custom-check { color: white; background: var(--green); border-color: var(--green); }
@@ -98,6 +111,7 @@ button { color: inherit; }
 .results { min-width: 0; padding: 30px clamp(20px, 3vw, 42px); background: var(--surface); }
 .results-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
 .results-toolbar h2 { margin: 7px 0 0; font: 500 32px/1 Georgia, serif; letter-spacing: -.025em; }
+.results-view-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
 .view-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; padding: 3px; background: #f2f2e9; }
 .view-switch button { border: 0; background: transparent; border-radius: 6px; padding: 8px 12px; font-size: 11px; font-weight: 700; cursor: pointer; }
 .view-switch button.active { background: white; color: var(--green); box-shadow: 0 2px 7px rgb(34 57 49 / 10%); }
@@ -138,4 +152,4 @@ footer { min-height: 90px; display: flex; align-items: center; gap: 18px; paddin
 footer span { font: 600 15px Georgia, serif; color: var(--ink); }
 @media (min-width: 1001px) { .multi-location-workspace { grid-template-columns: 370px minmax(0, 1fr); } }
 @media (max-width: 1000px) { .intro { grid-template-columns: 1fr; } .error-message { grid-column: 1; } .workspace { grid-template-columns: 285px minmax(0, 1fr); } }
-@media (max-width: 760px) { .topbar { position: static; } .privacy-badge { display: none; } .workflow-tabs { padding: 10px 14px; } .workflow-tabs button { min-width: 0; flex: 1; padding: 10px; } .workflow-tabs button span { font-size: 13px; } .workflow-tabs button small { font-size: 10px; } .intro { padding-top: 34px; } .intro h2 { font-size: 37px; } .dropzone { align-items: flex-start; flex-wrap: wrap; } .dropzone .button { width: 100%; margin-left: 0; } .preview-head { align-items: flex-start; flex-direction: column; } .preview-grid { grid-template-columns: 1fr; } .preview-grid article:not(:last-child) { border-right: 0; border-bottom: 1px solid var(--line); margin-right: 0; } .workspace { grid-template-columns: 1fr; } .filters { border-right: 0; border-bottom: 1px solid var(--line); } .results-toolbar { align-items: flex-start; flex-direction: column; } .view-switch { width: 100%; } .view-switch button { flex: 1; } .calculation-badge { white-space: normal; } .stats-row { grid-template-columns: repeat(3, 1fr); } .table-wrap { height: 65vh; min-height: 390px; } .table-footer { grid-template-columns: 1fr; } .export-actions { justify-self: stretch; flex-wrap: wrap; } .export-actions .button { flex: 1; } }
+@media (max-width: 760px) { .topbar { position: static; } .privacy-badge { display: none; } .workflow-tabs { padding: 10px 14px; } .workflow-tabs button { min-width: 0; flex: 1; padding: 10px; } .workflow-tabs button span { font-size: 13px; } .workflow-tabs button small { font-size: 10px; } .intro { padding-top: 34px; } .intro h2 { font-size: 37px; } .dropzone { align-items: flex-start; flex-wrap: wrap; } .dropzone .button { width: 100%; margin-left: 0; } .preview-head { align-items: flex-start; flex-direction: column; } .preview-grid { grid-template-columns: 1fr; } .preview-grid article:not(:last-child) { border-right: 0; border-bottom: 1px solid var(--line); margin-right: 0; } .workspace { grid-template-columns: 1fr; } .filters { border-right: 0; border-bottom: 1px solid var(--line); } .results-toolbar { align-items: flex-start; flex-direction: column; } .results-view-controls { width: 100%; justify-content: flex-start; } .view-switch { width: 100%; } .view-switch button { flex: 1; } .calculation-badge { white-space: normal; } .stats-row { grid-template-columns: repeat(3, 1fr); } .table-wrap { height: 65vh; min-height: 390px; } .table-footer { grid-template-columns: 1fr; } .export-actions { justify-self: stretch; flex-wrap: wrap; } .export-actions .button { flex: 1; } }

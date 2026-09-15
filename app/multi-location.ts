@@ -21,6 +21,8 @@ export type MultiLocationFilters = {
   observers: string[];
 };
 
+export type MultiLocationDimension = 'entity' | 'location' | 'observer';
+
 export type MultiLocationResult = {
   rows: Record<string, MultiLocationCellValue>[];
   headers: string[];
@@ -74,6 +76,19 @@ function naturalCompare(a: string, b: string) {
 
 export function getMultiLocationValues(records: MultiLocationRecord[], field: 'entity' | 'location' | 'observer') {
   return Array.from(new Set(records.map((record) => record[field].trim()).filter(Boolean))).sort(naturalCompare);
+}
+
+export function hasNumericMetric(record: MultiLocationRecord, metricNames: string[]) {
+  return metricNames.some((metric) => toMultiLocationNumber(record.metrics[metric]) !== null);
+}
+
+export function getMultiLocationFacetCounts(records: MultiLocationRecord[], field: MultiLocationDimension) {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    const value = record[field].trim();
+    if (value) counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return counts;
 }
 
 export function getNumericMetricCounts(records: MultiLocationRecord[], metricNames: string[]) {
@@ -217,6 +232,68 @@ export function aggregateMultiLocation(
   return {
     rows,
     headers: ['(GER) Name', ...selectedMetrics.map((metric) => `${metric} (média)`) ],
+    filteredRecordCount: filteredRecords.length,
+    numericValueCount,
+  };
+}
+
+export function listMultiLocationRecords(
+  records: MultiLocationRecord[],
+  filters: MultiLocationFilters,
+  selectedMetrics: string[],
+): MultiLocationResult {
+  const entitySet = new Set(filters.entities);
+  const locationSet = new Set(filters.locations);
+  const observerSet = new Set(filters.observers);
+  const filteredRecords = records.filter((record) => (
+    record.genotype
+    && entitySet.has(record.entity)
+    && locationSet.has(record.location)
+    && observerSet.has(record.observer)
+    && hasNumericMetric(record, selectedMetrics)
+  ));
+  const showBlock = filteredRecords.some((record) => isMultiLocationFilled(record.block));
+  const headers = [
+    'Location',
+    'Entity name',
+    '(GER) Name',
+    '(OBS) Name',
+    'Plot name',
+    ...(showBlock ? ['Block'] : []),
+    ...selectedMetrics,
+  ];
+  let numericValueCount = 0;
+
+  const rows = filteredRecords
+    .slice()
+    .sort((a, b) => (
+      naturalCompare(a.location, b.location)
+      || naturalCompare(a.entity, b.entity)
+      || naturalCompare(a.genotype, b.genotype)
+      || naturalCompare(a.plot, b.plot)
+      || naturalCompare(a.block, b.block)
+      || naturalCompare(a.observer, b.observer)
+    ))
+    .map((record) => {
+      const output: Record<string, MultiLocationCellValue> = {
+        Location: record.location,
+        'Entity name': record.entity,
+        '(GER) Name': record.genotype,
+        '(OBS) Name': record.observer,
+        'Plot name': record.plot,
+      };
+      if (showBlock) output.Block = record.block;
+      for (const metric of selectedMetrics) {
+        const value = record.metrics[metric];
+        output[metric] = value;
+        if (toMultiLocationNumber(value) !== null) numericValueCount += 1;
+      }
+      return output;
+    });
+
+  return {
+    rows,
+    headers,
     filteredRecordCount: filteredRecords.length,
     numericValueCount,
   };
