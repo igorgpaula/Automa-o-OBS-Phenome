@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 type CellValue = string | number | boolean | Date | null | undefined;
 type DataRow = Record<string, CellValue>;
 type ViewMode = 'observacoes' | 'parcelas' | 'repeticoes';
+type SortConfig = { header: string; direction: 'asc' | 'desc' } | null;
 
 const IDENTITY_ALIASES = {
   observation: ['observation name', 'observation', 'observacao', 'observação'],
@@ -55,6 +56,16 @@ function toFiniteNumber(value: CellValue) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function compareCellValues(a: CellValue, b: CellValue) {
+  const aNumber = toFiniteNumber(a);
+  const bNumber = toFiniteNumber(b);
+  if (aNumber !== null && bNumber !== null) return aNumber - bNumber;
+  const aDate = a instanceof Date ? a.getTime() : null;
+  const bDate = b instanceof Date ? b.getTime() : null;
+  if (aDate !== null && bDate !== null) return aDate - bDate;
+  return displayValue(a).localeCompare(displayValue(b), 'pt-BR', { numeric: true, sensitivity: 'base' });
+}
+
 function blockHeader(value: string) {
   return /^(block|bloco)\b/i.test(value.trim()) ? value.trim() : `Block ${value.trim()}`;
 }
@@ -74,6 +85,7 @@ export default function Home() {
   const [mode, setMode] = useState<ViewMode>('observacoes');
   const [onlyWithValues, setOnlyWithValues] = useState(true);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [sortConfig, setSortConfig] = useState<SortConfig>(null);
   const [metricSearch, setMetricSearch] = useState('');
   const [typeSearch, setTypeSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -262,9 +274,22 @@ export default function Home() {
 
   const resultRows = useMemo(() => {
     const activeFilters = Object.entries(columnFilters).filter(([, value]) => value.trim());
-    if (!activeFilters.length) return transformedRows;
-    return transformedRows.filter((row) => activeFilters.every(([header, filter]) => normalize(displayValue(row[header])).includes(normalize(filter))));
-  }, [transformedRows, columnFilters]);
+    const filteredRows = activeFilters.length
+      ? transformedRows.filter((row) => activeFilters.every(([header, filter]) => normalize(displayValue(row[header])).includes(normalize(filter))))
+      : transformedRows;
+    if (!sortConfig || !resultHeaders.includes(sortConfig.header)) return filteredRows;
+    return filteredRows.map((row, index) => ({ row, index })).sort((a, b) => {
+      const aValue = a.row[sortConfig.header];
+      const bValue = b.row[sortConfig.header];
+      const aFilled = isFilled(aValue);
+      const bFilled = isFilled(bValue);
+      if (!aFilled && !bFilled) return a.index - b.index;
+      if (!aFilled) return 1;
+      if (!bFilled) return -1;
+      const comparison = compareCellValues(aValue, bValue);
+      return comparison === 0 ? a.index - b.index : sortConfig.direction === 'asc' ? comparison : -comparison;
+    }).map(({ row }) => row);
+  }, [transformedRows, columnFilters, sortConfig, resultHeaders]);
 
   const totalPlots = useMemo(() => columnMap.plot
     ? new Set(rows.map((row) => String(row[columnMap.plot!] ?? '')).filter(Boolean)).size : 0,
@@ -308,7 +333,9 @@ export default function Home() {
         throw new Error(`Não encontrei as colunas obrigatórias: ${missing.join(', ')}. Confira os cabeçalhos da extração.`);
       }
       const parsedRows = matrix.slice(1).filter((row) => row.some(isFilled)).map((values) => Object.fromEntries(rawHeaders.map((header, index) => [header, values[index] ?? ''])) as DataRow);
-      const types = Array.from(new Set(parsedRows.map((row) => String(row[observationColumn] ?? '').trim()).filter(Boolean))).sort(naturalCompare);
+      const types = observationColumn
+        ? Array.from(new Set(parsedRows.map((row) => String(row[observationColumn] ?? '').trim()).filter(Boolean))).sort(naturalCompare)
+        : [];
       const fixedColumns = new Set([...Object.values(IDENTITY_ALIASES).flat(), 'evaluation date', 'evaluator']);
       const metrics = rawHeaders.filter((header) => !fixedColumns.has(normalize(header)));
       const populatedMetrics = metrics.filter((metric) => parsedRows.some((row) => isFilled(row[metric])));
@@ -322,6 +349,7 @@ export default function Home() {
       setMode('observacoes');
       setOnlyWithValues(true);
       setColumnFilters({});
+      setSortConfig(null);
       setMetricSearch('');
       setTypeSearch('');
       setPage(1);
@@ -330,6 +358,7 @@ export default function Home() {
       setRows([]);
       setHeaders([]);
       setColumnFilters({});
+      setSortConfig(null);
     } finally {
       setLoading(false);
     }
@@ -351,12 +380,14 @@ export default function Home() {
   function toggleType(type: string) {
     setSelectedTypes((current) => current.includes(type) ? current.filter((item) => item !== type) : [...current, type]);
     setColumnFilters({});
+    setSortConfig(null);
     setPage(1);
   }
 
   function toggleMetric(metric: string) {
     setSelectedMetrics((current) => current.includes(metric) ? current.filter((item) => item !== metric) : [...current, metric]);
     setColumnFilters({});
+    setSortConfig(null);
     setPage(1);
   }
 
@@ -368,6 +399,16 @@ export default function Home() {
   function switchMode(nextMode: ViewMode) {
     setMode(nextMode);
     setColumnFilters({});
+    setSortConfig(null);
+    setPage(1);
+  }
+
+  function toggleSort(header: string) {
+    setSortConfig((current) => {
+      if (!current || current.header !== header) return { header, direction: 'asc' };
+      if (current.direction === 'asc') return { header, direction: 'desc' };
+      return null;
+    });
     setPage(1);
   }
 
@@ -426,11 +467,11 @@ export default function Home() {
       ) : (
         <section className="workspace">
           <aside className="filters">
-            <div className="section-heading"><span className="step-label">02 · Configurar</span><button className="text-button" type="button" onClick={() => { setSelectedTypes(selectableTypes); setSelectedMetrics(metricColumns.filter((metric) => rows.some((row) => isFilled(row[metric])))); setColumnFilters({}); setTypeSearch(''); setPage(1); }}>Restaurar</button></div>
+            <div className="section-heading"><span className="step-label">02 · Configurar</span><button className="text-button" type="button" onClick={() => { setSelectedTypes(selectableTypes); setSelectedMetrics(metricColumns.filter((metric) => rows.some((row) => isFilled(row[metric])))); setColumnFilters({}); setSortConfig(null); setTypeSearch(''); setPage(1); }}>Restaurar</button></div>
             {columnMap.observation ? <div className="filter-group">
               <div className="filter-title"><label>Segmentação · Observation name</label><span>{selectedTypes.length}/{selectableTypes.length} ativas</span></div>
               {availableTypes.length > 8 && <input id="type-search" className="search-input" value={typeSearch} onChange={(event) => setTypeSearch(event.target.value)} placeholder="Buscar valor…" />}
-              <div className="quick-actions"><button type="button" onClick={() => { setSelectedTypes(selectableTypes); setColumnFilters({}); setPage(1); }}>Todos</button><button type="button" onClick={() => { setSelectedTypes([]); setColumnFilters({}); setPage(1); }}>Limpar</button><span className="detected-values">{availableTypes.length} valores detectados</span></div>
+              <div className="quick-actions"><button type="button" onClick={() => { setSelectedTypes(selectableTypes); setColumnFilters({}); setSortConfig(null); setPage(1); }}>Todos</button><button type="button" onClick={() => { setSelectedTypes([]); setColumnFilters({}); setSortConfig(null); setPage(1); }}>Limpar</button><span className="detected-values">{availableTypes.length} valores detectados</span></div>
               <div className="type-grid">{visibleTypeOptions.map((type) => {
                 const stats = typeStats.get(type) ?? { filled: 0, total: 0 };
                 const enabled = stats.filled > 0;
@@ -440,12 +481,12 @@ export default function Home() {
             <div className="filter-group">
               <div className="filter-title"><label htmlFor="metric-search">Colunas de valores</label><span>{selectedMetrics.length}/{metricColumns.length}</span></div>
               <input id="metric-search" className="search-input" value={metricSearch} onChange={(event) => setMetricSearch(event.target.value)} placeholder="Buscar coluna…" />
-              <div className="quick-actions"><button type="button" onClick={() => { setSelectedMetrics(metricColumns.filter((metric) => (metricCounts.get(metric) ?? 0) > 0)); setColumnFilters({}); setPage(1); }}>Com dados</button><button type="button" onClick={() => { setSelectedMetrics(metricColumns); setColumnFilters({}); setPage(1); }}>Todas</button><button type="button" onClick={() => { setSelectedMetrics([]); setColumnFilters({}); setPage(1); }}>Limpar</button></div>
+              <div className="quick-actions"><button type="button" onClick={() => { setSelectedMetrics(metricColumns.filter((metric) => (metricCounts.get(metric) ?? 0) > 0)); setColumnFilters({}); setSortConfig(null); setPage(1); }}>Com dados</button><button type="button" onClick={() => { setSelectedMetrics(metricColumns); setColumnFilters({}); setSortConfig(null); setPage(1); }}>Todas</button><button type="button" onClick={() => { setSelectedMetrics([]); setColumnFilters({}); setSortConfig(null); setPage(1); }}>Limpar</button></div>
               <div className="metric-list">{visibleMetricOptions.map((metric) => (
                 <label key={metric} className="metric-option"><input type="checkbox" checked={selectedMetrics.includes(metric)} onChange={() => toggleMetric(metric)} /><span className="custom-check" aria-hidden="true">✓</span><span className="metric-name">{metric}</span><span className={`count-badge ${(metricCounts.get(metric) ?? 0) > 0 ? 'has-count' : ''}`}>{(metricCounts.get(metric) ?? 0).toLocaleString('pt-BR')}</span></label>
               ))}</div>
             </div>
-            <label className="toggle-row"><span><strong>Somente linhas com nota</strong><small>Oculta registros vazios nas colunas escolhidas</small></span><input type="checkbox" checked={onlyWithValues} onChange={(event) => { setOnlyWithValues(event.target.checked); setColumnFilters({}); setPage(1); }} /><span className="toggle" aria-hidden="true" /></label>
+            <label className="toggle-row"><span><strong>Somente linhas com nota</strong><small>Oculta registros vazios nas colunas escolhidas</small></span><input type="checkbox" checked={onlyWithValues} onChange={(event) => { setOnlyWithValues(event.target.checked); setColumnFilters({}); setSortConfig(null); setPage(1); }} /><span className="toggle" aria-hidden="true" /></label>
           </aside>
 
           <div className="results">
@@ -453,7 +494,11 @@ export default function Home() {
             {mode === 'repeticoes' && <p className="view-description"><strong>{availableBlocks.length} {availableBlocks.length === 1 ? 'Block detectado' : 'Blocks detectados'}.</strong> Cada linha combina genótipo{columnMap.observation ? ', observação' : ''} e variável; a média considera os Blocks com valores numéricos disponíveis.</p>}
             <div className="stats-row"><div><span>{isPlotDataset ? 'Plots na base' : 'Parcelas na base'}</span><strong>{totalPlots.toLocaleString('pt-BR')}</strong></div><div><span>Linhas no resultado</span><strong>{resultRows.length.toLocaleString('pt-BR')}</strong></div><div><span>Notas encontradas</span><strong>{noteCount.toLocaleString('pt-BR')}</strong></div></div>
             {selectedMetrics.length === 0 ? <div className="table-message"><strong>Escolha pelo menos uma coluna de valores.</strong><span>Use a lista à esquerda para montar a tabela.</span></div> : transformedRows.length === 0 ? <div className="table-message"><strong>Nenhuma nota encontrada com esses filtros.</strong><span>{columnMap.observation ? 'Tente outro tipo de observação ou desative “Somente linhas com nota”.' : 'Tente outras colunas ou desative “Somente linhas com nota”.'}</span></div> : (
-              <><div className="table-wrap"><table><thead><tr className="header-row">{resultHeaders.map((header) => <th key={header}>{header}</th>)}</tr><tr className="filter-row">{resultHeaders.map((header) => <th key={`filter-${header}`}><input className="column-filter" value={columnFilters[header] ?? ''} onChange={(event) => updateColumnFilter(header, event.target.value)} placeholder="Filtrar…" aria-label={`Filtrar coluna ${header}`} /></th>)}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, rowIndex) => <tr key={`${currentPage}-${rowIndex}`}>{resultHeaders.map((header) => <td key={header} className={isFilled(row[header]) ? '' : 'empty-cell'}>{displayValue(row[header]) || '—'}</td>)}</tr>) : <tr><td className="no-filter-results" colSpan={resultHeaders.length}>Nenhuma linha corresponde aos filtros das colunas.</td></tr>}</tbody></table></div>
+              <><div className="table-wrap"><table><thead><tr className="header-row">{resultHeaders.map((header) => {
+                const activeSort = sortConfig?.header === header ? sortConfig.direction : null;
+                const sortLabel = activeSort === 'asc' ? 'Ordem crescente: A–Z ou menor–maior' : activeSort === 'desc' ? 'Ordem decrescente: Z–A ou maior–menor' : 'Ordenar esta coluna';
+                return <th key={header} aria-sort={activeSort === 'asc' ? 'ascending' : activeSort === 'desc' ? 'descending' : 'none'}><div className="th-content"><span>{header}</span><button className={`sort-button ${activeSort ? 'active' : ''}`} type="button" onClick={() => toggleSort(header)} aria-label={`${sortLabel}: ${header}`} title={`${sortLabel}. Clique para alterar.`}>{activeSort === 'asc' ? '↑' : activeSort === 'desc' ? '↓' : '↕'}</button></div></th>;
+              })}</tr><tr className="filter-row">{resultHeaders.map((header) => <th key={`filter-${header}`}><input className="column-filter" value={columnFilters[header] ?? ''} onChange={(event) => updateColumnFilter(header, event.target.value)} placeholder="Filtrar…" aria-label={`Filtrar coluna ${header}`} /></th>)}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, rowIndex) => <tr key={`${currentPage}-${rowIndex}`}>{resultHeaders.map((header) => <td key={header} className={isFilled(row[header]) ? '' : 'empty-cell'}>{displayValue(row[header]) || '—'}</td>)}</tr>) : <tr><td className="no-filter-results" colSpan={resultHeaders.length}>Nenhuma linha corresponde aos filtros das colunas.</td></tr>}</tbody></table></div>
               <div className="table-footer"><div className="table-summary"><span>Mostrando {resultRows.length ? ((currentPage - 1) * pageSize + 1).toLocaleString('pt-BR') : '0'}–{resultRows.length ? Math.min(currentPage * pageSize, resultRows.length).toLocaleString('pt-BR') : '0'} de {resultRows.length.toLocaleString('pt-BR')}</span>{activeColumnFilterCount > 0 && <button className="text-button" type="button" onClick={() => { setColumnFilters({}); setPage(1); }}>Limpar {activeColumnFilterCount} {activeColumnFilterCount === 1 ? 'filtro' : 'filtros'}</button>}</div><div className="pagination"><button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button><span>{currentPage} / {totalPages}</span><button type="button" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Próxima</button></div><div className="export-actions"><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
             )}
           </div>
