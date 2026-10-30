@@ -15,6 +15,7 @@ export const SINGLE_LOCATION_ALIASES = {
     'origin',
     'origem',
     'plot name',
+    'nome do gráfico',
     'plot',
     'plot id',
     'parcela',

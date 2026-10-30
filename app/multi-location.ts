@@ -35,7 +35,7 @@ const MULTI_LOCATION_ALIASES = {
   location: ['location', 'local', 'localidade', 'localizacao', 'localização'],
   genotype: ['(ger) name', 'ger name', '(ger) nome', 'nome (ger)', 'nome ger', 'name', 'genotype', 'genotipo', 'genótipo', 'germoplasma'],
   observer: ['(obs) name', 'obs name', '(obs) nome', 'nome (obs)', 'nome obs', 'observation name', 'observation', 'observacao', 'observação', 'observer', 'avaliador'],
-  plot: ['plot name', 'nome do plot', 'nome de plot', 'origin', 'plot', 'plot id', 'parcela', 'nome da parcela', 'nome de parcela'],
+  plot: ['plot name', 'nome do gráfico', 'nome do plot', 'nome de plot', 'origin', 'plot', 'plot id', 'parcela', 'nome da parcela', 'nome de parcela'],
   block: ['block', 'bloco', 'repeticao', 'repetição', 'rep'],
 };
 

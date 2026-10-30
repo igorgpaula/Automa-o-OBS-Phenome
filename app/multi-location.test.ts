@@ -16,6 +16,17 @@ const matrix = [
 ];
 
 describe('parseMultiLocationMatrix', () => {
+  it('importa os cabeçalhos reais dos templates PRYT em inglês e português com o mesmo resultado', () => {
+    const english = ['ID', 'FEID', 'Observation id', 'Type', 'Entity name', 'Site', 'Location', 'GID', '(GER) Name', 'Pedigree', '(OBS) Name', 'Plot name', 'Block', 'YIELD.KG', 'CS', 'VIG', 'LOD', 'HD', 'HEIGHT.CM', 'XANT', 'TS', 'FHB', 'PM', 'OBS'];
+    const portuguese = ['ID', 'FEID', 'ID de observação', 'Tipo', 'Nome da entidade', 'Unidade', 'Localização', 'GID', '(GER) Nome', 'Pedigree', '(OBS) Nome', 'Nome do gráfico', 'Block', 'YIELD.KG', 'CS', 'VIG', 'LOD', 'HD', 'HEIGHT.CM', 'XANT', 'TS', 'FHB', 'PM', 'OBS'];
+    const row = [1, 101, 201, 'OBS', 'Ensaio 1', 'Unidade A', 'Local A', 301, 'GEN 1', '', 'AA', 'P1001', 2, 0, '', 5];
+    const parsed = parseMultiLocationMatrix([portuguese, row]);
+
+    expect(parsed).toEqual(parseMultiLocationMatrix([english, row]));
+    expect(parsed.records[0]).toMatchObject({ plot: 'P1001', block: '2', metrics: { 'YIELD.KG': 0, VIG: 5 } });
+    expect(parsed.metricNames).toEqual(english.slice(13));
+  });
+
   it('ignora colunas anteriores a Block, aceita FEID duplicado e Block vazio', () => {
     const parsed = parseMultiLocationMatrix(matrix);
 
