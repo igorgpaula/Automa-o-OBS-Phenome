@@ -3,6 +3,7 @@
 import { ChangeEvent, DragEvent, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import MultiLocationWorkspace from './MultiLocationWorkspace';
+import { analyzeSingleLocationHeaders, mapSingleLocationHeaders, normalizeSingleLocationHeader } from './single-location';
 
 type CellValue = string | number | boolean | Date | null | undefined;
 type DataRow = Record<string, CellValue>;
@@ -10,24 +11,7 @@ type ViewMode = 'observacoes' | 'parcelas' | 'repeticoes';
 type SortConfig = { header: string; direction: 'asc' | 'desc' } | null;
 type CopyStatus = 'idle' | 'copied' | 'error';
 
-const IDENTITY_ALIASES = {
-  observation: ['observation name', 'observation', 'observacao', 'observação'],
-  plot: ['origin', 'plot name', 'plot', 'plot id', 'parcela'],
-  name: ['name', 'genotype', 'genotipo', 'genótipo'],
-  pedigree: ['pedigree'],
-  history: ['selection history', 'historico de selecao', 'histórico de seleção'],
-  block: ['block', 'bloco'],
-  feid: ['feid'],
-  entryCode: ['entry code', 'entrycode'],
-  row: ['row', 'linha'],
-  column: ['column', 'coluna'],
-  discarded: ['is discarded', 'discarded', 'descartado'],
-  uuid: ['uuid'],
-};
-
-function normalize(value: string) {
-  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
+const normalize = normalizeSingleLocationHeader;
 
 function isFilled(value: CellValue) {
   return value !== null && value !== undefined && String(value).trim() !== '';
@@ -39,10 +23,6 @@ function displayValue(value: CellValue) {
   if (value === true) return 'Sim';
   if (value === false) return 'Não';
   return String(value ?? '');
-}
-
-function findHeader(headers: string[], aliases: string[]) {
-  return headers.find((header) => aliases.includes(normalize(header)));
 }
 
 function naturalCompare(a: string, b: string) {
@@ -96,20 +76,8 @@ export default function Home() {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
 
-  const columnMap = useMemo(() => ({
-    observation: findHeader(headers, IDENTITY_ALIASES.observation),
-    plot: findHeader(headers, IDENTITY_ALIASES.plot),
-    name: findHeader(headers, IDENTITY_ALIASES.name),
-    pedigree: findHeader(headers, IDENTITY_ALIASES.pedigree),
-    history: findHeader(headers, IDENTITY_ALIASES.history),
-    block: findHeader(headers, IDENTITY_ALIASES.block),
-    feid: findHeader(headers, IDENTITY_ALIASES.feid),
-    entryCode: findHeader(headers, IDENTITY_ALIASES.entryCode),
-    row: findHeader(headers, IDENTITY_ALIASES.row),
-    column: findHeader(headers, IDENTITY_ALIASES.column),
-    discarded: findHeader(headers, IDENTITY_ALIASES.discarded),
-    uuid: findHeader(headers, IDENTITY_ALIASES.uuid),
-  }), [headers]);
+  const headerAnalysis = useMemo(() => mapSingleLocationHeaders(headers), [headers]);
+  const columnMap = headerAnalysis.columns;
 
   const identityColumns = useMemo(() => {
     const preferred = [columnMap.uuid, columnMap.feid, columnMap.name, columnMap.pedigree, columnMap.history, columnMap.entryCode, columnMap.plot, columnMap.row, columnMap.column, columnMap.block, columnMap.discarded, columnMap.observation];
@@ -118,10 +86,7 @@ export default function Home() {
 
   const isPlotDataset = rows.length > 0 && !columnMap.observation && Boolean(columnMap.feid && columnMap.entryCode);
 
-  const metricColumns = useMemo(() => {
-    const identitySet = new Set([...identityColumns, 'Evaluation date', 'Evaluator'].map(normalize));
-    return headers.filter((header) => !identitySet.has(normalize(header)));
-  }, [headers, identityColumns]);
+  const metricColumns = headerAnalysis.metricColumns;
 
   const availableTypes = useMemo(() => {
     if (!columnMap.observation) return [];
@@ -310,33 +275,13 @@ export default function Home() {
       if (!firstSheet) throw new Error('A planilha não possui abas legíveis.');
       const matrix = XLSX.utils.sheet_to_json<CellValue[]>(workbook.Sheets[firstSheet], { header: 1, defval: '', raw: true });
       const rawHeaders = (matrix[0] ?? []).map((value, index) => String(value || `Coluna ${index + 1}`).trim());
-      const observationColumn = findHeader(rawHeaders, IDENTITY_ALIASES.observation);
-      const plotColumn = findHeader(rawHeaders, IDENTITY_ALIASES.plot);
-      const nameColumn = findHeader(rawHeaders, IDENTITY_ALIASES.name);
-      const pedigreeColumn = findHeader(rawHeaders, IDENTITY_ALIASES.pedigree);
-      const historyColumn = findHeader(rawHeaders, IDENTITY_ALIASES.history);
-      const blockColumn = findHeader(rawHeaders, IDENTITY_ALIASES.block);
-      const feidColumn = findHeader(rawHeaders, IDENTITY_ALIASES.feid);
-      const entryCodeColumn = findHeader(rawHeaders, IDENTITY_ALIASES.entryCode);
-      const isObservationsFile = Boolean(observationColumn);
-      const isPlotsFile = !observationColumn && Boolean(feidColumn && entryCodeColumn);
-      const missing = [
-        ...(!nameColumn ? ['Name'] : []),
-        ...(!pedigreeColumn ? ['Pedigree'] : []),
-        ...(!historyColumn ? ['Selection history'] : []),
-        ...(!plotColumn ? ['Origin ou Plot name'] : []),
-        ...(!blockColumn ? ['Block'] : []),
-        ...(!isObservationsFile && !isPlotsFile ? ['Observation name ou FEID + Entry code'] : []),
-      ];
-      if (missing.length) {
-        throw new Error(`Não encontrei as colunas obrigatórias: ${missing.join(', ')}. Confira os cabeçalhos da extração.`);
-      }
+      const analyzedHeaders = analyzeSingleLocationHeaders(rawHeaders);
+      const observationColumn = analyzedHeaders.columns.observation;
       const parsedRows = matrix.slice(1).filter((row) => row.some(isFilled)).map((values) => Object.fromEntries(rawHeaders.map((header, index) => [header, values[index] ?? ''])) as DataRow);
       const types = observationColumn
         ? Array.from(new Set(parsedRows.map((row) => String(row[observationColumn] ?? '').trim()).filter(Boolean))).sort(naturalCompare)
         : [];
-      const fixedColumns = new Set([...Object.values(IDENTITY_ALIASES).flat(), 'evaluation date', 'evaluator']);
-      const metrics = rawHeaders.filter((header) => !fixedColumns.has(normalize(header)));
+      const metrics = analyzedHeaders.metricColumns;
       const populatedMetrics = metrics.filter((metric) => parsedRows.some((row) => isFilled(row[metric])));
       const populatedTypes = observationColumn ? types.filter((type) => parsedRows.some((row) => String(row[observationColumn] ?? '').trim() === type && metrics.some((metric) => isFilled(row[metric])))) : [];
       setFileName(file.name);
@@ -515,7 +460,7 @@ export default function Home() {
                 const enabled = stats.filled > 0;
                 return <button key={type} type="button" className={`type-chip ${selectedTypes.includes(type) ? 'selected' : ''}`} onClick={() => toggleType(type)} disabled={!enabled} aria-pressed={selectedTypes.includes(type)} title={`${stats.filled.toLocaleString('pt-BR')} com dados de ${stats.total.toLocaleString('pt-BR')} registros`}><span>{type}</span><small>{stats.filled.toLocaleString('pt-BR')}/{stats.total.toLocaleString('pt-BR')}</small></button>;
               })}</div>
-            </div> : <div className="dataset-card"><span>Formato detectado</span><strong>Plots</strong><p>Cada linha representa um plot. FEID, Name, Pedigree, Selection history, Entry code, Plot name e Block são tratados como identificadores.</p></div>}
+            </div> : <div className="dataset-card"><span>Formato detectado</span><strong>Plots</strong><p>Cada linha representa um plot. FEID, Name/Nome, Entry code/Código de entrada, Plot name/Nome da parcela e Block/Bloco são identificadores. Pedigree e Selection history são opcionais.</p></div>}
             <div className="filter-group">
               <div className="filter-title"><label htmlFor="metric-search">Colunas de valores</label><span>{selectedMetrics.length}/{metricColumns.length}</span></div>
               <input id="metric-search" className="search-input" value={metricSearch} onChange={(event) => setMetricSearch(event.target.value)} placeholder="Buscar coluna…" />
