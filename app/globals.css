@@ -142,6 +142,9 @@ td.empty-cell { color: #b7bbb4; }
 .export-actions { display: flex; align-items: center; gap: 7px; }
 .copy-button { min-width: 112px; }
 .copy-button.copied { background: #dcebd8; color: var(--green-dark); }
+.rep-context { margin: 12px 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.rep-context p { margin: 4px 0; }
+.rep-filters select { width: 100%; }
 .copy-button.error { background: #fff1ea; color: #9d341f; }
 .table-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .export-actions { justify-self: end; }

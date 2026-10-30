@@ -23,6 +23,62 @@ export type MultiLocationFilters = {
 
 export type MultiLocationDimension = 'entity' | 'location' | 'observer';
 
+export type RepetitionSelection = { metric: string; location: string; entity: string; observer: string };
+
+export function resolveRepetitionSelection(records: MultiLocationRecord[], metrics: string[], requested: Partial<RepetitionSelection> = {}) {
+  const counts = getNumericMetricCounts(records, metrics);
+  const metricOptions = metrics.filter((metric) => (counts.get(metric) ?? 0) > 0);
+  const choose = (options: string[], value?: string) => value !== undefined && options.includes(value) ? value : options[0] ?? '';
+  const metric = choose(metricOptions, requested.metric);
+  const numericRecords = records.filter((record) => hasNumericMetric(record, [metric]));
+  const locations = getMultiLocationValues(numericRecords, 'location');
+  const location = choose(locations, requested.location);
+  const localRecords = numericRecords.filter((record) => record.location === location);
+  const entities = getMultiLocationValues(localRecords, 'entity');
+  const entity = choose(entities, requested.entity);
+  const observers = getMultiLocationValues(localRecords.filter((record) => record.entity === entity), 'observer');
+  const observer = choose(observers, requested.observer);
+  return { selection: { metric, location, entity, observer }, options: { metric: metricOptions, location: locations, entity: entities, observer: observers } };
+}
+
+export function aggregateRepetitions(records: MultiLocationRecord[], selection: RepetitionSelection): MultiLocationResult {
+  const filtered = selection.metric ? records.filter((record) => record.genotype
+    && record.location === selection.location && record.entity === selection.entity && record.observer === selection.observer) : [];
+  const blocks = Array.from(new Set(filtered.map((record) => record.block.trim()).filter(Boolean))).sort(naturalCompare);
+  const repLabel = (block: string) => /^\d+$/.test(block) ? `Rep${block}` : `Rep ${block}`;
+  const showUnassigned = filtered.some((record) => !record.block.trim());
+  const groups = new Map<string, Map<string, { sum: number; count: number }>>();
+  let numericValueCount = 0;
+  for (const record of filtered) {
+    if (!groups.has(record.genotype)) groups.set(record.genotype, new Map());
+    const value = toMultiLocationNumber(record.metrics[selection.metric]);
+    if (value === null) continue;
+    const group = groups.get(record.genotype)!;
+    const block = record.block.trim();
+    const accumulator = group.get(block) ?? { sum: 0, count: 0 };
+    accumulator.sum += value;
+    accumulator.count++;
+    group.set(block, accumulator);
+    numericValueCount++;
+  }
+  const rows = Array.from(groups.entries()).sort(([a], [b]) => naturalCompare(a, b)).map(([genotype, group]) => {
+    const row: Record<string, MultiLocationCellValue> = { 'Genótipo': genotype };
+    const means: number[] = [];
+    for (const block of blocks) {
+      const value = group.get(block);
+      row[repLabel(block)] = value ? value.sum / value.count : '';
+      if (value) means.push(value.sum / value.count);
+    }
+    if (showUnassigned) {
+      const value = group.get('');
+      row['Sem Block'] = value ? value.sum / value.count : '';
+    }
+    row['Média'] = means.length ? means.reduce((sum, value) => sum + value, 0) / means.length : '';
+    return row;
+  });
+  return { rows, headers: ['Genótipo', ...blocks.map(repLabel), ...(showUnassigned ? ['Sem Block'] : []), 'Média'], filteredRecordCount: filtered.length, numericValueCount };
+}
+
 export type MultiLocationResult = {
   rows: Record<string, MultiLocationCellValue>[];
   headers: string[];

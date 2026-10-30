@@ -4,6 +4,9 @@ import { ChangeEvent, DragEvent, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import {
   aggregateMultiLocation,
+  aggregateRepetitions,
+  resolveRepetitionSelection,
+  RepetitionSelection,
   getMultiLocationFacetCounts,
   getMultiLocationValues,
   getNumericMetricCounts,
@@ -19,7 +22,7 @@ import {
 
 type SortConfig = { header: string; direction: 'asc' | 'desc' } | null;
 type CopyStatus = 'idle' | 'copied' | 'error';
-type TableMode = 'averages' | 'plots';
+type TableMode = 'averages' | 'plots' | 'repetitions';
 type SegmentOption = { value: string; count: number };
 
 type SegmentFilterProps = {
@@ -94,6 +97,7 @@ export default function MultiLocationWorkspace() {
   const [selectedObservers, setSelectedObservers] = useState<string[]>([]);
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([]);
   const [tableMode, setTableMode] = useState<TableMode>('averages');
+  const [repSelection, setRepSelection] = useState<Partial<RepetitionSelection>>({});
   const [onlyWithValues, setOnlyWithValues] = useState(true);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
@@ -153,9 +157,12 @@ export default function MultiLocationWorkspace() {
     { entities: effectiveEntities, locations: effectiveLocations, observers: effectiveObservers },
     selectedMetrics,
   ), [records, effectiveEntities, effectiveLocations, effectiveObservers, selectedMetrics]);
-  const tableModel = tableMode === 'averages' ? aggregation : plotListing;
+  const repCascade = useMemo(() => resolveRepetitionSelection(records, metricNames, repSelection), [records, metricNames, repSelection]);
+  const repetitions = useMemo(() => aggregateRepetitions(records, repCascade.selection), [records, repCascade]);
+  const isRepView = tableMode === 'repetitions';
+  const tableModel = isRepView ? repetitions : tableMode === 'averages' ? aggregation : plotListing;
   const tableGenotypeCount = useMemo(
-    () => new Set(tableModel.rows.map((row) => String(row['(GER) Name'] ?? '')).filter(Boolean)).size,
+    () => new Set(tableModel.rows.map((row) => String(row['(GER) Name'] ?? row['Genótipo'] ?? '')).filter(Boolean)).size,
     [tableModel],
   );
 
@@ -192,7 +199,7 @@ export default function MultiLocationWorkspace() {
     setError('');
     try {
       const data = await file.arrayBuffer();
-      const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+      const workbook = XLSX.read(data, { type: 'array', cellDates: true, raw: true });
       const firstSheet = workbook.SheetNames[0];
       if (!firstSheet) throw new Error('A planilha não possui abas legíveis.');
       const matrix = XLSX.utils.sheet_to_json<MultiLocationCellValue[]>(workbook.Sheets[firstSheet], { header: 1, defval: '', raw: true });
@@ -210,6 +217,7 @@ export default function MultiLocationWorkspace() {
       setSelectedObservers(getMultiLocationValues(parsed.records, 'observer'));
       setSelectedMetrics(populatedMetrics);
       setTableMode('averages');
+      setRepSelection({});
       setOnlyWithValues(true);
       setEntitySearch('');
       setLocationSearch('');
@@ -244,6 +252,11 @@ export default function MultiLocationWorkspace() {
   }
 
   function restoreSelections() {
+    if (isRepView) {
+      setRepSelection({});
+      resetTableState();
+      return;
+    }
     setSelectedEntities(availableEntities);
     setSelectedLocations(availableLocations);
     setSelectedObservers(availableObservers);
@@ -275,17 +288,18 @@ export default function MultiLocationWorkspace() {
     const sheet = XLSX.utils.json_to_sheet(resultRows, { header: tableModel.headers });
     const stem = safeFileStem(fileName) || 'phenome';
     const isAverageView = tableMode === 'averages';
+    const suffix = isRepView ? `rep_by_rep_${repCascade.selection.metric.replace(/[^a-zA-Z0-9_-]+/g, '_')}` : isAverageView ? 'medias' : 'parcelas';
     if (format === 'xlsx') {
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, sheet, isAverageView ? 'Médias multi-location' : 'Parcelas multi-location');
-      XLSX.writeFile(workbook, `${stem}_${isAverageView ? 'medias' : 'parcelas'}_multi_location.xlsx`);
+      XLSX.utils.book_append_sheet(workbook, sheet, isRepView ? 'Rep by Rep' : isAverageView ? 'Médias multi-location' : 'Parcelas multi-location');
+      XLSX.writeFile(workbook, `${stem}_${suffix}_multi_location.xlsx`);
     } else {
       const csv = XLSX.utils.sheet_to_csv(sheet, { FS: ';' });
       const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `${stem}_${isAverageView ? 'medias' : 'parcelas'}_multi_location.csv`;
+      anchor.download = `${stem}_${suffix}_multi_location.csv`;
       anchor.click();
       URL.revokeObjectURL(url);
     }
@@ -324,7 +338,7 @@ export default function MultiLocationWorkspace() {
   return (
     <>
       <section className="intro multi-location-intro">
-        <div><span className="step-label">01 · Importar rede</span><h2>Compare locais pela média de cada genótipo.</h2><p>Filtre as variáveis em cascata e alterne entre a média consolidada e os dados parcela por parcela.</p></div>
+        <div><span className="step-label">01 · Importar rede</span><h2>Compare locais pela média de cada genótipo.</h2><p>Filtre as variáveis em cascata e explore médias, parcelas e repetições por genótipo.</p></div>
         <div className={`dropzone ${dragging ? 'is-dragging' : ''} ${records.length ? 'has-file' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={handleDrop}>
           <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleInput} aria-label="Selecionar arquivo multi-location do Phenome" />
           <div className="file-icon" aria-hidden="true">XLS</div>
@@ -348,6 +362,20 @@ export default function MultiLocationWorkspace() {
           <aside className="filters">
             <div className="section-heading"><span className="step-label">02 · Segmentar</span><button className="text-button" type="button" onClick={restoreSelections}>Restaurar</button></div>
             <p className="cascade-hint">Os filtros abaixo funcionam em cascata. Cada etapa considera as seleções anteriores.</p>
+            {isRepView ? <div className="rep-filters">
+              {([['metric', 'Variável'], ['location', 'Local'], ['entity', 'Ensaio'], ['observer', 'Tomador']] as const).map(([field, label], index) => (
+                <div className="filter-group" key={field}>
+                  <div className="filter-title"><label htmlFor={`rep-${field}`}><span className="cascade-number">{index + 1}</span>{label}</label></div>
+                  <select id={`rep-${field}`} className="search-input" value={repCascade.selection[field]} disabled={!repCascade.options[field].length} onChange={(event) => {
+                    setRepSelection(resolveRepetitionSelection(records, metricNames, { ...repCascade.selection, [field]: event.target.value }).selection);
+                    resetTableState();
+                  }}>
+                    {!repCascade.options[field].length && <option value="">Sem opções com dados</option>}
+                    {repCascade.options[field].map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div> : <>
             <div className="filter-group cascade-step">
               <div className="filter-title"><label htmlFor="multi-metric-search"><span className="cascade-number">1</span>Variáveis</label><span>{selectedMetrics.filter((metric) => (metricCounts.get(metric) ?? 0) > 0).length}/{metricNames.filter((metric) => (metricCounts.get(metric) ?? 0) > 0).length}</span></div>
               <input id="multi-metric-search" className="search-input" value={metricSearch} onChange={(event) => setMetricSearch(event.target.value)} placeholder="Buscar variável…" />
@@ -364,19 +392,29 @@ export default function MultiLocationWorkspace() {
             <div className="cascade-step"><span className="cascade-number">3</span><SegmentFilter label="Entity name · Ensaio" options={entityOptions} selected={selectedEntities} search={entitySearch} onSearch={setEntitySearch} onChange={setSelectedEntities} onResetTable={resetTableState} /></div>
             <div className="cascade-step"><span className="cascade-number">4</span><SegmentFilter label="(OBS) Name · Tomador da nota" options={observerOptions} selected={selectedObservers} search={observerSearch} onSearch={setObserverSearch} onChange={setSelectedObservers} onResetTable={resetTableState} /></div>
             {tableMode === 'averages' && <label className="toggle-row"><span><strong>Somente genótipos com média</strong><small>Oculta genótipos sem valor numérico nas variáveis escolhidas</small></span><input type="checkbox" checked={onlyWithValues} onChange={(event) => { setOnlyWithValues(event.target.checked); resetTableState(); }} /><span className="toggle" aria-hidden="true" /></label>}
+            </>}
           </aside>
 
           <div className="results">
-            <div className="results-toolbar"><div><span className="step-label">03 · Visualizar e exportar</span><h2>{tableMode === 'averages' ? 'Médias por genótipo' : 'Dados parcela por parcela'}</h2></div><div className="results-view-controls"><div className="view-switch" aria-label="Modo de visualização"><button type="button" className={tableMode === 'averages' ? 'active' : ''} onClick={() => { setTableMode('averages'); resetTableState(); }}>Médias</button><button type="button" className={tableMode === 'plots' ? 'active' : ''} onClick={() => { setTableMode('plots'); resetTableState(); }}>Parcelas</button></div><span className="calculation-badge">{tableMode === 'averages' ? 'Média entre registros filtrados' : 'Uma linha por registro'}</span></div></div>
-            <p className="view-description">{tableMode === 'averages' ? <><strong>Block não separa o resultado.</strong> Cada linha reúne todas as observações selecionadas do mesmo (GER) Name.</> : <><strong>Detalhamento original.</strong> Cada linha mostra local, ensaio, genótipo, tomador, parcela e Block quando houver.</>}</p>
+            <div className="results-toolbar">
+              <div><span className="step-label">03 · Visualizar e exportar</span><h2>{isRepView ? 'Rep by Rep' : tableMode === 'averages' ? 'Médias por genótipo' : 'Dados parcela por parcela'}</h2></div>
+              <div className="results-view-controls"><div className="view-switch" aria-label="Modo de visualização">
+                {([['averages', 'Médias'], ['plots', 'Parcelas'], ['repetitions', 'Rep by Rep']] as const).map(([mode, label]) => <button key={mode} type="button" className={tableMode === mode ? 'active' : ''} aria-pressed={tableMode === mode} onClick={() => { setTableMode(mode); resetTableState(); }}>{label}</button>)}
+              </div><span className="calculation-badge">{isRepView ? 'Média entre repetições preenchidas' : tableMode === 'averages' ? 'Média entre registros filtrados' : 'Uma linha por registro'}</span></div>
+            </div>
+            <p className="view-description">{isRepView ? <><strong>Uma linha por genótipo.</strong> Cada Rep mostra a média das notas daquele Block. A média final dá peso igual às repetições preenchidas e não inclui Sem Block.</> : tableMode === 'averages' ? <><strong>Block não separa o resultado.</strong> Cada linha reúne todas as observações selecionadas do mesmo (GER) Name.</> : <><strong>Detalhamento original.</strong> Cada linha mostra local, ensaio, genótipo, tomador, parcela e Block quando houver.</>}</p>
+            {isRepView && <div className="rep-context">
+              <p><strong>Variável:</strong> {repCascade.selection.metric || '—'} · <strong>Local:</strong> {repCascade.selection.location || '—'} · <strong>Ensaio:</strong> {repCascade.selection.entity || '—'} · <strong>Tomador:</strong> {repCascade.selection.observer || '—'}</p>
+              {tableModel.headers.includes('Sem Block') && tableModel.headers.length === 3 && <p role="status">Os registros selecionados não têm Block preenchido. As notas estão em Sem Block; a média das repetições fica indisponível.</p>}
+            </div>}
             <div className="stats-row"><div><span>Registros filtrados</span><strong>{tableModel.filteredRecordCount.toLocaleString('pt-BR')}</strong></div><div><span>Genótipos</span><strong>{tableGenotypeCount.toLocaleString('pt-BR')}</strong></div><div><span>{tableMode === 'averages' ? 'Valores na média' : 'Valores exibidos'}</span><strong>{tableModel.numericValueCount.toLocaleString('pt-BR')}</strong></div></div>
-            {selectedMetrics.length === 0 ? <div className="table-message"><strong>Escolha pelo menos uma variável.</strong><span>Use a primeira segmentação à esquerda para liberar os demais filtros.</span></div> : tableModel.rows.length === 0 ? <div className="table-message"><strong>Nenhum dado encontrado com esses filtros.</strong><span>Selecione outros locais, ensaios ou tomadores de nota.</span></div> : (
+            {(isRepView ? !repCascade.selection.metric : selectedMetrics.length === 0) ? <div className="table-message"><strong>Escolha pelo menos uma variável.</strong><span>Use a primeira segmentação à esquerda para liberar os demais filtros.</span></div> : tableModel.rows.length === 0 ? <div className="table-message"><strong>Nenhum dado encontrado com esses filtros.</strong><span>Selecione outros locais, ensaios ou tomadores de nota.</span></div> : (
               <><div className="table-wrap"><table><thead><tr className="header-row">{tableModel.headers.map((header) => {
                 const activeSort = sortConfig?.header === header ? sortConfig.direction : null;
                 const sortLabel = activeSort === 'asc' ? 'Ordem crescente' : activeSort === 'desc' ? 'Ordem decrescente' : 'Ordenar esta coluna';
                 return <th key={header} aria-sort={activeSort === 'asc' ? 'ascending' : activeSort === 'desc' ? 'descending' : 'none'}><div className="th-content"><span>{header}</span><button className={`sort-button ${activeSort ? 'active' : ''}`} type="button" onClick={() => toggleSort(header)} aria-label={`${sortLabel}: ${header}`}>{activeSort === 'asc' ? '↑' : activeSort === 'desc' ? '↓' : '↕'}</button></div></th>;
               })}</tr><tr className="filter-row">{tableModel.headers.map((header) => <th key={`filter-${header}`}><input className="column-filter" value={columnFilters[header] ?? ''} onChange={(event) => { setColumnFilters((current) => ({ ...current, [header]: event.target.value })); setCopyStatus('idle'); }} placeholder="Filtrar…" aria-label={`Filtrar coluna ${header}`} /></th>)}</tr></thead><tbody>{resultRows.length ? resultRows.map((row, rowIndex) => <tr key={rowIndex}>{tableModel.headers.map((header) => <td key={header} className={isMultiLocationFilled(row[header]) ? '' : 'empty-cell'}>{displayValue(row[header]) || '—'}</td>)}</tr>) : <tr><td className="no-filter-results" colSpan={tableModel.headers.length}>Nenhuma linha corresponde aos filtros das colunas.</td></tr>}</tbody></table></div>
-              <div className="table-footer"><div className="table-summary"><span>{resultRows.length.toLocaleString('pt-BR')} {tableMode === 'averages' ? (resultRows.length === 1 ? 'genótipo' : 'genótipos') : (resultRows.length === 1 ? 'registro' : 'registros')}</span>{activeColumnFilterCount > 0 && <button className="text-button" type="button" onClick={() => { setColumnFilters({}); setCopyStatus('idle'); }}>Limpar {activeColumnFilterCount} {activeColumnFilterCount === 1 ? 'filtro' : 'filtros'}</button>}</div><div className="export-actions"><button className={`button secondary copy-button ${copyStatus}`} type="button" onClick={() => void copyData()} disabled={!resultRows.length}>{copyStatus === 'copied' ? 'Dados copiados!' : copyStatus === 'error' ? 'Não foi possível copiar' : 'Copiar dados'}</button><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
+              <div className="table-footer"><div className="table-summary"><span>{resultRows.length.toLocaleString('pt-BR')} {tableMode !== 'plots' ? (resultRows.length === 1 ? 'genótipo' : 'genótipos') : (resultRows.length === 1 ? 'registro' : 'registros')}</span>{activeColumnFilterCount > 0 && <button className="text-button" type="button" onClick={() => { setColumnFilters({}); setCopyStatus('idle'); }}>Limpar {activeColumnFilterCount} {activeColumnFilterCount === 1 ? 'filtro' : 'filtros'}</button>}</div><div className="export-actions"><button className={`button secondary copy-button ${copyStatus}`} type="button" onClick={() => void copyData()} disabled={!resultRows.length}>{copyStatus === 'copied' ? 'Dados copiados!' : copyStatus === 'error' ? 'Não foi possível copiar' : 'Copiar dados'}</button><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
             )}
           </div>
         </section>
