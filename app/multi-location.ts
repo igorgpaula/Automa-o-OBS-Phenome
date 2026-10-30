@@ -31,11 +31,11 @@ export type MultiLocationResult = {
 };
 
 const MULTI_LOCATION_ALIASES = {
-  entity: ['entity name', 'entity', 'nome do ensaio', 'ensaio'],
-  location: ['location', 'local', 'localidade'],
-  genotype: ['(ger) name', 'ger name', 'name', 'genotype', 'genotipo', 'genótipo', 'germoplasma'],
-  observer: ['(obs) name', 'obs name', 'observation name', 'observation', 'observacao', 'observação', 'observer', 'avaliador'],
-  plot: ['plot name', 'origin', 'plot', 'plot id', 'parcela'],
+  entity: ['entity name', 'entity', 'nome da entidade', 'nome de entidade', 'entidade', 'nome do ensaio', 'ensaio'],
+  location: ['location', 'local', 'localidade', 'localizacao', 'localização'],
+  genotype: ['(ger) name', 'ger name', '(ger) nome', 'nome (ger)', 'nome ger', 'name', 'genotype', 'genotipo', 'genótipo', 'germoplasma'],
+  observer: ['(obs) name', 'obs name', '(obs) nome', 'nome (obs)', 'nome obs', 'observation name', 'observation', 'observacao', 'observação', 'observer', 'avaliador'],
+  plot: ['plot name', 'nome do plot', 'nome de plot', 'origin', 'plot', 'plot id', 'parcela', 'nome da parcela', 'nome de parcela'],
   block: ['block', 'bloco', 'repeticao', 'repetição', 'rep'],
 };
 
@@ -61,13 +61,34 @@ export function toMultiLocationNumber(value: MultiLocationCellValue) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function findHeaderIndex(headers: string[], aliases: string[]) {
+type MultiLocationColumn = keyof typeof MULTI_LOCATION_ALIASES;
+
+function hasAnyToken(tokens: Set<string>, candidates: string[]) {
+  return candidates.some((candidate) => tokens.has(candidate));
+}
+
+function matchesHeaderMeaning(header: string, column: MultiLocationColumn) {
+  const tokens = new Set(normalizeHeader(header)
+    .replace(/[()[\]{}._/-]+/g, ' ')
+    .split(' ')
+    .filter(Boolean));
+  const hasName = hasAnyToken(tokens, ['name', 'nome']);
+
+  if (column === 'entity') return hasName && hasAnyToken(tokens, ['entity', 'entidade']);
+  if (column === 'location') return hasAnyToken(tokens, ['location', 'local', 'localidade', 'localizacao']);
+  if (column === 'genotype') return hasName && tokens.has('ger');
+  if (column === 'observer') return hasName && tokens.has('obs');
+  if (column === 'plot') return hasName && hasAnyToken(tokens, ['plot', 'parcela']);
+  return false;
+}
+
+function findHeaderIndex(headers: string[], column: MultiLocationColumn) {
   const normalizedHeaders = headers.map(normalizeHeader);
-  for (const alias of aliases) {
+  for (const alias of MULTI_LOCATION_ALIASES[column]) {
     const index = normalizedHeaders.indexOf(normalizeHeader(alias));
     if (index >= 0) return index;
   }
-  return -1;
+  return headers.findIndex((header) => matchesHeaderMeaning(header, column));
 }
 
 function naturalCompare(a: string, b: string) {
@@ -110,12 +131,12 @@ export function parseMultiLocationMatrix(matrix: MultiLocationCellValue[][]): Mu
 
   const headers = matrix[0].map((value, index) => String(value ?? '').trim() || `Coluna ${index + 1}`);
   const columnIndexes = {
-    entity: findHeaderIndex(headers, MULTI_LOCATION_ALIASES.entity),
-    location: findHeaderIndex(headers, MULTI_LOCATION_ALIASES.location),
-    genotype: findHeaderIndex(headers, MULTI_LOCATION_ALIASES.genotype),
-    observer: findHeaderIndex(headers, MULTI_LOCATION_ALIASES.observer),
-    plot: findHeaderIndex(headers, MULTI_LOCATION_ALIASES.plot),
-    block: findHeaderIndex(headers, MULTI_LOCATION_ALIASES.block),
+    entity: findHeaderIndex(headers, 'entity'),
+    location: findHeaderIndex(headers, 'location'),
+    genotype: findHeaderIndex(headers, 'genotype'),
+    observer: findHeaderIndex(headers, 'observer'),
+    plot: findHeaderIndex(headers, 'plot'),
+    block: findHeaderIndex(headers, 'block'),
   };
 
   const requiredColumns: Array<[keyof typeof columnIndexes, string]> = [

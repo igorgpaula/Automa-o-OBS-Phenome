@@ -41,6 +41,23 @@ describe('parseMultiLocationMatrix', () => {
     expect(parsed.metricNames).toEqual(['VIG']);
   });
 
+  it('reconhece o template multi-location em português', () => {
+    const parsed = parseMultiLocationMatrix([
+      ['ID', 'FEID', 'Nome da entidade', 'Localização', 'Nome (GER)', 'FEID', 'Nome (OBS)', 'Nome da parcela', 'Bloco', 'VIG', 'ALT'],
+      [1, 101, 'Ensaio 1', 'Local A', 'GEN 1', 201, 'AA', '1001', '', '5', 10],
+    ]);
+
+    expect(parsed.records[0]).toMatchObject({
+      entity: 'Ensaio 1',
+      location: 'Local A',
+      genotype: 'GEN 1',
+      observer: 'AA',
+      plot: '1001',
+      block: '',
+    });
+    expect(parsed.metricNames).toEqual(['VIG', 'ALT']);
+  });
+
   it('bloqueia variáveis duplicadas depois de Block', () => {
     expect(() => parseMultiLocationMatrix([
       ['Entity name', 'Location', '(GER) Name', '(OBS) Name', 'Plot name', 'Block', 'VIG', 'vig'],
