@@ -23,6 +23,65 @@ export type MultiLocationFilters = {
 
 export type MultiLocationDimension = 'entity' | 'location' | 'observer';
 
+export type BlockInferenceSummary = {
+  inferredPlots: number;
+  inferredRecords: number;
+  pendingGroups: Array<{
+    location: string;
+    entity: string;
+    genotype: string;
+    pendingRecords: number;
+    reasons: Array<'conflict' | 'missing-identifiers'>;
+  }>;
+};
+
+// Keep source labels in Parcelas, but combine numerically equivalent Blocks in Rep by Rep.
+function repetitionBlock(block: string) {
+  const number = toMultiLocationNumber(block);
+  return number !== null && Number.isInteger(number) && number > 0 ? String(number) : block.trim();
+}
+
+export function inferMissingBlocks(input: MultiLocationRecord[]): { records: MultiLocationRecord[]; summary: BlockInferenceSummary } {
+  const records = input.map((record) => ({ ...record }));
+  const summary: BlockInferenceSummary = { inferredPlots: 0, inferredRecords: 0, pendingGroups: [] };
+  const groups = new Map<string, MultiLocationRecord[]>();
+  for (const record of records) {
+    const key = JSON.stringify([record.location.trim(), record.entity.trim(), record.genotype.trim()]);
+    const group = groups.get(key) ?? [];
+    group.push(record);
+    groups.set(key, group);
+  }
+  for (const group of groups.values()) {
+    if (!group.some((record) => !record.block.trim())) continue;
+    const { location, entity, genotype } = group[0];
+    const hasGroupIdentity = [location, entity, genotype].every((value) => value.trim());
+    const eligible = hasGroupIdentity ? group.filter((record) => record.plot.trim()) : [];
+    const plots = Array.from(new Set(eligible.map((record) => record.plot.trim())))
+      .sort((a, b) => naturalCompare(a, b) || (a < b ? -1 : a > b ? 1 : 0));
+    const ranks = new Map(plots.map((plot, index) => [plot, index + 1]));
+    const conflict = eligible.some((record) => record.block.trim()
+      && toMultiLocationNumber(record.block) !== ranks.get(record.plot.trim()));
+    const inferredPlots = new Set<string>();
+    if (!conflict) {
+      for (const record of eligible) {
+        if (record.block.trim()) continue;
+        record.block = String(ranks.get(record.plot.trim()));
+        inferredPlots.add(record.plot.trim());
+        summary.inferredRecords++;
+      }
+    }
+    summary.inferredPlots += inferredPlots.size;
+    const pending = group.filter((record) => !record.block.trim());
+    if (pending.length) {
+      const reasons: BlockInferenceSummary['pendingGroups'][number]['reasons'] = [];
+      if (conflict) reasons.push('conflict');
+      if (pending.some((record) => !hasGroupIdentity || !record.plot.trim())) reasons.push('missing-identifiers');
+      summary.pendingGroups.push({ location, entity, genotype, pendingRecords: pending.length, reasons });
+    }
+  }
+  return { records, summary };
+}
+
 export type RepetitionSelection = { metric: string; location: string; entity: string; observer: string };
 
 export function resolveRepetitionSelection(records: MultiLocationRecord[], metrics: string[], requested: Partial<RepetitionSelection> = {}) {
@@ -44,7 +103,7 @@ export function resolveRepetitionSelection(records: MultiLocationRecord[], metri
 export function aggregateRepetitions(records: MultiLocationRecord[], selection: RepetitionSelection): MultiLocationResult {
   const filtered = selection.metric ? records.filter((record) => record.genotype
     && record.location === selection.location && record.entity === selection.entity && record.observer === selection.observer) : [];
-  const blocks = Array.from(new Set(filtered.map((record) => record.block.trim()).filter(Boolean))).sort(naturalCompare);
+  const blocks = Array.from(new Set(filtered.map((record) => repetitionBlock(record.block)).filter(Boolean))).sort(naturalCompare);
   const repLabel = (block: string) => /^\d+$/.test(block) ? `Rep${block}` : `Rep ${block}`;
   const showUnassigned = filtered.some((record) => !record.block.trim());
   const groups = new Map<string, Map<string, { sum: number; count: number }>>();
@@ -54,7 +113,7 @@ export function aggregateRepetitions(records: MultiLocationRecord[], selection: 
     const value = toMultiLocationNumber(record.metrics[selection.metric]);
     if (value === null) continue;
     const group = groups.get(record.genotype)!;
-    const block = record.block.trim();
+    const block = repetitionBlock(record.block);
     const accumulator = group.get(block) ?? { sum: 0, count: 0 };
     accumulator.sum += value;
     accumulator.count++;

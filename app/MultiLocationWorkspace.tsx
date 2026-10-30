@@ -5,6 +5,8 @@ import * as XLSX from 'xlsx';
 import {
   aggregateMultiLocation,
   aggregateRepetitions,
+  inferMissingBlocks,
+  BlockInferenceSummary,
   resolveRepetitionSelection,
   RepetitionSelection,
   getMultiLocationFacetCounts,
@@ -91,6 +93,7 @@ export default function MultiLocationWorkspace() {
   const [fileName, setFileName] = useState('');
   const [sheetName, setSheetName] = useState('');
   const [records, setRecords] = useState<MultiLocationRecord[]>([]);
+  const [blockSummary, setBlockSummary] = useState<BlockInferenceSummary | null>(null);
   const [metricNames, setMetricNames] = useState<string[]>([]);
   const [selectedEntities, setSelectedEntities] = useState<string[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
@@ -210,7 +213,9 @@ export default function MultiLocationWorkspace() {
 
       setFileName(file.name);
       setSheetName(firstSheet);
-      setRecords(parsed.records);
+      const enriched = inferMissingBlocks(parsed.records);
+      setRecords(enriched.records);
+      setBlockSummary(enriched.summary);
       setMetricNames(parsed.metricNames);
       setSelectedEntities(getMultiLocationValues(parsed.records, 'entity'));
       setSelectedLocations(getMultiLocationValues(parsed.records, 'location'));
@@ -227,6 +232,7 @@ export default function MultiLocationWorkspace() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Não foi possível ler esse arquivo.');
       setRecords([]);
+      setBlockSummary(null);
       setMetricNames([]);
       setSelectedEntities([]);
       setSelectedLocations([]);
@@ -347,6 +353,17 @@ export default function MultiLocationWorkspace() {
         </div>
         {error && <p className="error-message" role="alert">{error}</p>}
       </section>
+
+      {records.length > 0 && blockSummary && <section className="block-summary" aria-label="Preenchimento de Block">
+        <p><strong>Block automático:</strong> {blockSummary.inferredPlots.toLocaleString('pt-BR')} parcelas preenchidas pela ordem crescente dentro de cada local, ensaio e genótipo. Blocks existentes foram preservados.</p>
+        {blockSummary.pendingGroups.length > 0 ? <details>
+          <summary>{blockSummary.pendingGroups.length.toLocaleString('pt-BR')} {blockSummary.pendingGroups.length === 1 ? 'grupo' : 'grupos'} com pendências — ver detalhes</summary>
+          <p>Os registros pendentes continuam sem Block. Confira os identificadores e os Blocks informados no arquivo.</p>
+          <ul>{blockSummary.pendingGroups.map((group, index) => <li key={index}>
+            <strong>{group.location || 'Local ausente'} · {group.entity || 'Ensaio ausente'} · {group.genotype || 'Genótipo ausente'}</strong>: {group.pendingRecords} {group.pendingRecords === 1 ? 'registro' : 'registros'} sem Block. {group.reasons.map((reason) => reason === 'conflict' ? 'Block existente incompatível com a ordem das parcelas.' : 'Local, ensaio, genótipo ou parcela ausente.').join(' ')}
+          </li>)}</ul>
+        </details> : <p>Sem pendências de preenchimento.</p>}
+      </section>}
 
       {!records.length ? (
         <section className="empty-preview" aria-label="Como funciona o modo multi-location">
