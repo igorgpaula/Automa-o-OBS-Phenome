@@ -137,6 +137,7 @@ td { padding: 10px 14px; min-width: 108px; max-width: 270px; overflow: hidden; t
 tbody tr:nth-child(even) td { background: #fbfaf5; }
 tbody tr:hover td { background: #f3f7dd; }
 td.empty-cell { color: #b7bbb4; }
+td.heatmap-cell { font-weight: 650; transition: background-color .18s ease; }
 .no-filter-results { height: 120px; text-align: center; color: var(--ink-soft); background: #fbfaf5; }
 .table-footer { min-height: 64px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 18px; padding: 10px 12px 10px 16px; background: #f6f5ed; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 11px 11px; font-size: 11px; color: var(--ink-soft); }
 .export-actions { display: flex; align-items: center; gap: 7px; }
@@ -151,6 +152,12 @@ td.empty-cell { color: #b7bbb4; }
 .block-summary ul { max-height: 240px; overflow: auto; padding-left: 22px; }
 .copy-button.error { background: #fff1ea; color: #9d341f; }
 .table-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.heatmap-toggle { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #b9c7be; border-radius: 7px; background: white; color: var(--ink-soft); padding: 6px 9px; font: inherit; font-weight: 700; cursor: pointer; }
+.heatmap-toggle:hover, .heatmap-toggle.active { border-color: var(--green); color: var(--green-dark); background: #eef4e9; }
+.heatmap-toggle:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+.heatmap-swatch { width: 24px; height: 8px; border-radius: 100px; background: linear-gradient(90deg, hsl(6 72% 70%), hsl(63 72% 70%), hsl(120 72% 70%)); }
+.heatmap-legend { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: 9px; white-space: nowrap; }
+.heatmap-legend i { width: 54px; height: 7px; border-radius: 100px; background: linear-gradient(90deg, hsl(6 72% 78%), hsl(63 72% 78%), hsl(120 72% 78%)); }
 .export-actions { justify-self: end; }
 .table-message { min-height: 270px; border: 1px solid var(--line); border-radius: 11px; display: grid; place-content: center; text-align: center; background: #fbfaf5; }
 .table-message strong { font: 600 19px Georgia, serif; }

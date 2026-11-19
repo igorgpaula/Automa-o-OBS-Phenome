@@ -2,6 +2,7 @@
 
 import { ChangeEvent, DragEvent, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
+import { buildHeatmapScales, heatmapCellStyle } from './heatmap';
 import {
   aggregateMultiLocation,
   aggregateRepetitions,
@@ -109,6 +110,7 @@ export default function MultiLocationWorkspace() {
   const [observerSearch, setObserverSearch] = useState('');
   const [metricSearch, setMetricSearch] = useState('');
   const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle');
+  const [heatmapEnabled, setHeatmapEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
@@ -188,6 +190,24 @@ export default function MultiLocationWorkspace() {
       return comparison === 0 ? a.index - b.index : sortConfig.direction === 'asc' ? comparison : -comparison;
     }).map(({ row }) => row);
   }, [tableModel, columnFilters, sortConfig]);
+
+  const heatmapValueHeaders = useMemo(() => {
+    if (isRepView) return tableModel.headers.filter((header) => /^Rep(?:\d|\s)/.test(header) || header === 'Sem Block' || header === 'Média');
+    if (tableMode === 'averages') return selectedMetrics.map((metric) => `${metric} (média)`).filter((header) => tableModel.headers.includes(header));
+    return selectedMetrics.filter((header) => tableModel.headers.includes(header));
+  }, [isRepView, tableMode, tableModel.headers, selectedMetrics]);
+  const heatmapHeaderSet = useMemo(() => new Set(heatmapValueHeaders), [heatmapValueHeaders]);
+  const heatmapScales = useMemo(() => buildHeatmapScales(
+    resultRows,
+    heatmapValueHeaders,
+    isRepView ? () => repCascade.selection.metric : undefined,
+  ), [resultRows, heatmapValueHeaders, isRepView, repCascade.selection.metric]);
+
+  function getHeatmapStyle(row: Record<string, MultiLocationCellValue>, header: string) {
+    if (!heatmapEnabled || !heatmapHeaderSet.has(header)) return undefined;
+    const scaleKey = isRepView ? repCascade.selection.metric : header;
+    return heatmapCellStyle(row[header], heatmapScales.get(scaleKey));
+  }
 
   const visibleMetricOptions = metricNames.filter((metric) => normalizeHeader(metric).includes(normalizeHeader(metricSearch)));
 
@@ -430,8 +450,11 @@ export default function MultiLocationWorkspace() {
                 const activeSort = sortConfig?.header === header ? sortConfig.direction : null;
                 const sortLabel = activeSort === 'asc' ? 'Ordem crescente' : activeSort === 'desc' ? 'Ordem decrescente' : 'Ordenar esta coluna';
                 return <th key={header} aria-sort={activeSort === 'asc' ? 'ascending' : activeSort === 'desc' ? 'descending' : 'none'}><div className="th-content"><span>{header}</span><button className={`sort-button ${activeSort ? 'active' : ''}`} type="button" onClick={() => toggleSort(header)} aria-label={`${sortLabel}: ${header}`}>{activeSort === 'asc' ? '↑' : activeSort === 'desc' ? '↓' : '↕'}</button></div></th>;
-              })}</tr><tr className="filter-row">{tableModel.headers.map((header) => <th key={`filter-${header}`}><input className="column-filter" value={columnFilters[header] ?? ''} onChange={(event) => { setColumnFilters((current) => ({ ...current, [header]: event.target.value })); setCopyStatus('idle'); }} placeholder="Filtrar…" aria-label={`Filtrar coluna ${header}`} /></th>)}</tr></thead><tbody>{resultRows.length ? resultRows.map((row, rowIndex) => <tr key={rowIndex}>{tableModel.headers.map((header) => <td key={header} className={isMultiLocationFilled(row[header]) ? '' : 'empty-cell'}>{displayValue(row[header]) || '—'}</td>)}</tr>) : <tr><td className="no-filter-results" colSpan={tableModel.headers.length}>Nenhuma linha corresponde aos filtros das colunas.</td></tr>}</tbody></table></div>
-              <div className="table-footer"><div className="table-summary"><span>{resultRows.length.toLocaleString('pt-BR')} {tableMode !== 'plots' ? (resultRows.length === 1 ? 'genótipo' : 'genótipos') : (resultRows.length === 1 ? 'registro' : 'registros')}</span>{activeColumnFilterCount > 0 && <button className="text-button" type="button" onClick={() => { setColumnFilters({}); setCopyStatus('idle'); }}>Limpar {activeColumnFilterCount} {activeColumnFilterCount === 1 ? 'filtro' : 'filtros'}</button>}</div><div className="export-actions"><button className={`button secondary copy-button ${copyStatus}`} type="button" onClick={() => void copyData()} disabled={!resultRows.length}>{copyStatus === 'copied' ? 'Dados copiados!' : copyStatus === 'error' ? 'Não foi possível copiar' : 'Copiar dados'}</button><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
+              })}</tr><tr className="filter-row">{tableModel.headers.map((header) => <th key={`filter-${header}`}><input className="column-filter" value={columnFilters[header] ?? ''} onChange={(event) => { setColumnFilters((current) => ({ ...current, [header]: event.target.value })); setCopyStatus('idle'); }} placeholder="Filtrar…" aria-label={`Filtrar coluna ${header}`} /></th>)}</tr></thead><tbody>{resultRows.length ? resultRows.map((row, rowIndex) => <tr key={rowIndex}>{tableModel.headers.map((header) => {
+                const heatmapStyle = getHeatmapStyle(row, header);
+                return <td key={header} className={`${isMultiLocationFilled(row[header]) ? '' : 'empty-cell'}${heatmapStyle ? ' heatmap-cell' : ''}`} style={heatmapStyle}>{displayValue(row[header]) || '—'}</td>;
+              })}</tr>) : <tr><td className="no-filter-results" colSpan={tableModel.headers.length}>Nenhuma linha corresponde aos filtros das colunas.</td></tr>}</tbody></table></div>
+              <div className="table-footer"><div className="table-summary"><span>{resultRows.length.toLocaleString('pt-BR')} {tableMode !== 'plots' ? (resultRows.length === 1 ? 'genótipo' : 'genótipos') : (resultRows.length === 1 ? 'registro' : 'registros')}</span>{activeColumnFilterCount > 0 && <button className="text-button" type="button" onClick={() => { setColumnFilters({}); setCopyStatus('idle'); }}>Limpar {activeColumnFilterCount} {activeColumnFilterCount === 1 ? 'filtro' : 'filtros'}</button>}<button className={`heatmap-toggle ${heatmapEnabled ? 'active' : ''}`} type="button" aria-pressed={heatmapEnabled} onClick={() => setHeatmapEnabled((current) => !current)}><span className="heatmap-swatch" aria-hidden="true" />Heatmap</button>{heatmapEnabled && <span className="heatmap-legend" aria-label="Escala do heatmap: menor valor em vermelho e maior valor em verde"><span>Menor</span><i aria-hidden="true" /><span>Maior</span></span>}</div><div className="export-actions"><button className={`button secondary copy-button ${copyStatus}`} type="button" onClick={() => void copyData()} disabled={!resultRows.length}>{copyStatus === 'copied' ? 'Dados copiados!' : copyStatus === 'error' ? 'Não foi possível copiar' : 'Copiar dados'}</button><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
             )}
           </div>
         </section>
