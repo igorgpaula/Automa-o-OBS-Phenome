@@ -3,9 +3,9 @@ import * as XLSX from 'xlsx';
 import { aggregateMultiLocation, aggregateRepetitions, inferMissingBlocks, listMultiLocationRecords, type MultiLocationRecord } from './multi-location';
 
 const record = (plot: string, overrides: Partial<MultiLocationRecord> = {}): MultiLocationRecord => ({
-  location: 'L1', entity: 'E1', genotype: 'G1', observer: 'O1', plot, block: '', metrics: { VIG: 4 }, ...overrides,
+  location: 'L1', entity: 'E1', genotype: 'G1', entryCode: '', observer: 'O1', plot, block: '', metrics: { VIG: 4 }, ...overrides,
 });
-const selection = { location: 'L1', entity: 'E1', observer: 'O1', metric: 'VIG' };
+const selection = { location: 'L1', entity: 'E1', metric: 'VIG' };
 const filters = { locations: ['L1'], entities: ['E1'], observers: ['O1', 'O2'] };
 
 describe('inferMissingBlocks', () => {
@@ -64,7 +64,7 @@ describe('inferMissingBlocks', () => {
   it('usa todas as parcelas antes dos filtros e mantém o cálculo da aba Médias', () => {
     const input = [record('3', { metrics: { VIG: 8 } }), record('1', { observer: 'O2', metrics: { ALT: 4 } }), record('2', { metrics: { VIG: 0 } })];
     const { records } = inferMissingBlocks(input);
-    expect(aggregateRepetitions(records, selection).rows).toEqual([{ Genótipo: 'G1', Rep2: 0, Rep3: 8, Média: 4 }]);
+    expect(aggregateRepetitions(records, selection).rows).toEqual([{ Genótipo: 'G1', Rep1: '', Rep2: 0, Rep3: 8, Média: 4 }]);
     expect(aggregateMultiLocation(records, filters, ['VIG', 'ALT'])).toEqual(aggregateMultiLocation(input, filters, ['VIG', 'ALT']));
     const rows = listMultiLocationRecords(records, filters, ['VIG']).rows;
     const sheet = XLSX.utils.json_to_sheet(rows);

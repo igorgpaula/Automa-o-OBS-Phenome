@@ -380,7 +380,7 @@ export default function MultiLocationWorkspace() {
             <div className="section-heading"><span className="step-label">02 · Segmentar</span><button className="text-button" type="button" onClick={restoreSelections}>Restaurar</button></div>
             <p className="cascade-hint">Os filtros abaixo funcionam em cascata. Cada etapa considera as seleções anteriores.</p>
             {isRepView ? <div className="rep-filters">
-              {([['metric', 'Variável'], ['location', 'Local'], ['entity', 'Ensaio'], ['observer', 'Tomador']] as const).map(([field, label], index) => (
+              {([['metric', 'Variável'], ['location', 'Local'], ['entity', 'Ensaio']] as const).map(([field, label], index) => (
                 <div className="filter-group" key={field}>
                   <div className="filter-title"><label htmlFor={`rep-${field}`}><span className="cascade-number">{index + 1}</span>{label}</label></div>
                   <select id={`rep-${field}`} className="search-input" value={repCascade.selection[field]} disabled={!repCascade.options[field].length} onChange={(event) => {
@@ -421,11 +421,11 @@ export default function MultiLocationWorkspace() {
             </div>
             <p className="view-description">{isRepView ? <><strong>Uma linha por genótipo.</strong> Cada Rep mostra a média das notas daquele Block. A média final dá peso igual às repetições preenchidas e não inclui Sem Block.</> : tableMode === 'averages' ? <><strong>Block não separa o resultado.</strong> Cada linha reúne todas as observações selecionadas do mesmo (GER) Name.</> : <><strong>Detalhamento original.</strong> Cada linha mostra local, ensaio, genótipo, tomador, parcela e Block quando houver.</>}</p>
             {isRepView && <div className="rep-context">
-              <p><strong>Variável:</strong> {repCascade.selection.metric || '—'} · <strong>Local:</strong> {repCascade.selection.location || '—'} · <strong>Ensaio:</strong> {repCascade.selection.entity || '—'} · <strong>Tomador:</strong> {repCascade.selection.observer || '—'}</p>
-              {tableModel.headers.includes('Sem Block') && tableModel.headers.length === 3 && <p role="status">Os registros selecionados não têm Block preenchido. As notas estão em Sem Block; a média das repetições fica indisponível.</p>}
+              <p><strong>Variável:</strong> {repCascade.selection.metric || '—'} · <strong>Local:</strong> {repCascade.selection.location || '—'} · <strong>Ensaio:</strong> {repCascade.selection.entity || '—'}</p>
+              {tableModel.headers.includes('Sem Block') && !tableModel.headers.some((header) => /^Rep(?:\d|\s)/.test(header)) && <p role="status">Os registros selecionados não têm Block preenchido. As notas estão em Sem Block; a média das repetições fica indisponível.</p>}
             </div>}
             <div className="stats-row"><div><span>Registros filtrados</span><strong>{tableModel.filteredRecordCount.toLocaleString('pt-BR')}</strong></div><div><span>Genótipos</span><strong>{tableGenotypeCount.toLocaleString('pt-BR')}</strong></div><div><span>{tableMode === 'averages' ? 'Valores na média' : 'Valores exibidos'}</span><strong>{tableModel.numericValueCount.toLocaleString('pt-BR')}</strong></div></div>
-            {(isRepView ? !repCascade.selection.metric : selectedMetrics.length === 0) ? <div className="table-message"><strong>Escolha pelo menos uma variável.</strong><span>Use a primeira segmentação à esquerda para liberar os demais filtros.</span></div> : tableModel.rows.length === 0 ? <div className="table-message"><strong>Nenhum dado encontrado com esses filtros.</strong><span>Selecione outros locais, ensaios ou tomadores de nota.</span></div> : (
+            {(isRepView ? !repCascade.selection.metric : selectedMetrics.length === 0) ? <div className="table-message"><strong>Escolha pelo menos uma variável.</strong><span>Use a primeira segmentação à esquerda para liberar os demais filtros.</span></div> : tableModel.rows.length === 0 ? <div className="table-message"><strong>Nenhum dado encontrado com esses filtros.</strong><span>{isRepView ? 'Selecione outra variável, local ou ensaio.' : 'Selecione outros locais, ensaios ou tomadores de nota.'}</span></div> : (
               <><div className="table-wrap"><table><thead><tr className="header-row">{tableModel.headers.map((header) => {
                 const activeSort = sortConfig?.header === header ? sortConfig.direction : null;
                 const sortLabel = activeSort === 'asc' ? 'Ordem crescente' : activeSort === 'desc' ? 'Ordem decrescente' : 'Ordenar esta coluna';

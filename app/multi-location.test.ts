@@ -36,10 +36,29 @@ describe('parseMultiLocationMatrix', () => {
       entity: 'Ensaio 1',
       location: 'Local A',
       genotype: 'GEN 1',
+      entryCode: '',
       observer: 'AA',
       plot: '1001',
       block: '',
     });
+  });
+
+  it('reconhece Entry code em inglês e português sem tornar a coluna obrigatória', () => {
+    const english = parseMultiLocationMatrix([
+      ['Entity name', 'Location', '(GER) Name', '(OBS) Name', 'Entry code', 'Plot name', 'Block', 'VIG'],
+      ['E1', 'L1', 'G1', 'O1', '17', 'P1', '1', 5],
+    ]);
+    const portuguese = parseMultiLocationMatrix([
+      ['Nome da entidade', 'Localização', '(GER) Nome', '(OBS) Nome', 'Código de entrada', 'Nome da parcela', 'Bloco', 'VIG'],
+      ['E1', 'L1', 'G1', 'O1', '17', 'P1', '1', 5],
+    ]);
+
+    expect(english.records[0].entryCode).toBe('17');
+    expect(portuguese.records[0].entryCode).toBe('17');
+    expect(parseMultiLocationMatrix([
+      ['Entity name', 'Location', '(GER) Name', '(OBS) Name', 'Plot name', 'Block', 'VIG'],
+      ['E1', 'L1', 'G1', 'O1', 'P1', '1', 5],
+    ]).records[0].entryCode).toBe('');
   });
 
   it('reconhece aliases sem diferenciar acentos, caixa ou espaços extras', () => {
@@ -130,6 +149,17 @@ describe('aggregateMultiLocation', () => {
     expect(entityCounts.get('Ensaio 2')).toBeUndefined();
   });
 
+  it('exibe Entry code nas médias sem alterar o agrupamento por nome', () => {
+    const records = parsed.records.map((record, index) => ({
+      ...record,
+      entryCode: record.genotype === 'GEN 1' ? (index % 2 ? '2' : '1') : '9',
+    }));
+    const result = aggregateMultiLocation(records, allFilters, ['VIG']);
+
+    expect(result.headers).toEqual(['Entry code', '(GER) Name', 'VIG (média)']);
+    expect(result.rows[0]).toMatchObject({ 'Entry code': '1 | 2', '(GER) Name': 'GEN 1', 'VIG (média)': 6 });
+  });
+
   it('lista uma linha por registro e mostra Block somente quando houver valor', () => {
     const result = listMultiLocationRecords(parsed.records, allFilters, ['VIG', 'ALT']);
 
@@ -143,5 +173,13 @@ describe('aggregateMultiLocation', () => {
 
     const withoutBlock = listMultiLocationRecords(parsed.records.filter((record) => !record.block), allFilters, ['VIG']);
     expect(withoutBlock.headers).not.toContain('Block');
+  });
+
+  it('mostra Entry code no detalhamento por parcela quando estiver preenchido', () => {
+    const records = parsed.records.map((record, index) => ({ ...record, entryCode: String(index + 1) }));
+    const result = listMultiLocationRecords(records, allFilters, ['VIG']);
+
+    expect(result.headers).toEqual(['Location', 'Entity name', 'Entry code', '(GER) Name', '(OBS) Name', 'Plot name', 'VIG']);
+    expect(result.rows[0]['Entry code']).toBeTruthy();
   });
 });

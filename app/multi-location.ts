@@ -4,6 +4,7 @@ export type MultiLocationRecord = {
   entity: string;
   location: string;
   genotype: string;
+  entryCode: string;
   observer: string;
   plot: string;
   block: string;
@@ -82,7 +83,7 @@ export function inferMissingBlocks(input: MultiLocationRecord[]): { records: Mul
   return { records, summary };
 }
 
-export type RepetitionSelection = { metric: string; location: string; entity: string; observer: string };
+export type RepetitionSelection = { metric: string; location: string; entity: string };
 
 export function resolveRepetitionSelection(records: MultiLocationRecord[], metrics: string[], requested: Partial<RepetitionSelection> = {}) {
   const counts = getNumericMetricCounts(records, metrics);
@@ -95,24 +96,25 @@ export function resolveRepetitionSelection(records: MultiLocationRecord[], metri
   const localRecords = numericRecords.filter((record) => record.location === location);
   const entities = getMultiLocationValues(localRecords, 'entity');
   const entity = choose(entities, requested.entity);
-  const observers = getMultiLocationValues(localRecords.filter((record) => record.entity === entity), 'observer');
-  const observer = choose(observers, requested.observer);
-  return { selection: { metric, location, entity, observer }, options: { metric: metricOptions, location: locations, entity: entities, observer: observers } };
+  return { selection: { metric, location, entity }, options: { metric: metricOptions, location: locations, entity: entities } };
 }
 
 export function aggregateRepetitions(records: MultiLocationRecord[], selection: RepetitionSelection): MultiLocationResult {
   const filtered = selection.metric ? records.filter((record) => record.genotype
-    && record.location === selection.location && record.entity === selection.entity && record.observer === selection.observer) : [];
+    && record.location === selection.location && record.entity === selection.entity) : [];
   const blocks = Array.from(new Set(filtered.map((record) => repetitionBlock(record.block)).filter(Boolean))).sort(naturalCompare);
   const repLabel = (block: string) => /^\d+$/.test(block) ? `Rep${block}` : `Rep ${block}`;
   const showUnassigned = filtered.some((record) => !record.block.trim());
-  const groups = new Map<string, Map<string, { sum: number; count: number }>>();
+  const showEntryCode = filtered.some((record) => record.entryCode.trim());
+  const groups = new Map<string, { entryCodes: Set<string>; blocks: Map<string, { sum: number; count: number }> }>();
   let numericValueCount = 0;
   for (const record of filtered) {
-    if (!groups.has(record.genotype)) groups.set(record.genotype, new Map());
+    if (!groups.has(record.genotype)) groups.set(record.genotype, { entryCodes: new Set(), blocks: new Map() });
+    const genotypeGroup = groups.get(record.genotype)!;
+    if (record.entryCode.trim()) genotypeGroup.entryCodes.add(record.entryCode.trim());
     const value = toMultiLocationNumber(record.metrics[selection.metric]);
     if (value === null) continue;
-    const group = groups.get(record.genotype)!;
+    const group = genotypeGroup.blocks;
     const block = repetitionBlock(record.block);
     const accumulator = group.get(block) ?? { sum: 0, count: 0 };
     accumulator.sum += value;
@@ -120,8 +122,11 @@ export function aggregateRepetitions(records: MultiLocationRecord[], selection: 
     group.set(block, accumulator);
     numericValueCount++;
   }
-  const rows = Array.from(groups.entries()).sort(([a], [b]) => naturalCompare(a, b)).map(([genotype, group]) => {
-    const row: Record<string, MultiLocationCellValue> = { 'Genótipo': genotype };
+  const rows = Array.from(groups.entries()).sort(([a], [b]) => naturalCompare(a, b)).map(([genotype, genotypeGroup]) => {
+    const row: Record<string, MultiLocationCellValue> = {};
+    if (showEntryCode) row['Entry code'] = Array.from(genotypeGroup.entryCodes).sort(naturalCompare).join(' | ');
+    row['Genótipo'] = genotype;
+    const group = genotypeGroup.blocks;
     const means: number[] = [];
     for (const block of blocks) {
       const value = group.get(block);
@@ -135,7 +140,7 @@ export function aggregateRepetitions(records: MultiLocationRecord[], selection: 
     row['Média'] = means.length ? means.reduce((sum, value) => sum + value, 0) / means.length : '';
     return row;
   });
-  return { rows, headers: ['Genótipo', ...blocks.map(repLabel), ...(showUnassigned ? ['Sem Block'] : []), 'Média'], filteredRecordCount: filtered.length, numericValueCount };
+  return { rows, headers: [...(showEntryCode ? ['Entry code'] : []), 'Genótipo', ...blocks.map(repLabel), ...(showUnassigned ? ['Sem Block'] : []), 'Média'], filteredRecordCount: filtered.length, numericValueCount };
 }
 
 export type MultiLocationResult = {
@@ -149,6 +154,7 @@ const MULTI_LOCATION_ALIASES = {
   entity: ['entity name', 'entity', 'nome da entidade', 'nome de entidade', 'entidade', 'nome do ensaio', 'ensaio'],
   location: ['location', 'local', 'localidade', 'localizacao', 'localização'],
   genotype: ['(ger) name', 'ger name', '(ger) nome', 'nome (ger)', 'nome ger', 'name', 'genotype', 'genotipo', 'genótipo', 'germoplasma'],
+  entryCode: ['entry code', 'entrycode', 'codigo de entrada', 'código de entrada', 'codigo da entrada', 'código da entrada', 'codigo entrada', 'código entrada', 'cod. de entrada', 'cód. de entrada'],
   observer: ['(obs) name', 'obs name', '(obs) nome', 'nome (obs)', 'nome obs', 'observation name', 'observation', 'observacao', 'observação', 'observer', 'avaliador'],
   plot: ['plot name', 'nome do gráfico', 'nome do plot', 'nome de plot', 'origin', 'plot', 'plot id', 'parcela', 'nome da parcela', 'nome de parcela'],
   block: ['block', 'bloco', 'repeticao', 'repetição', 'rep'],
@@ -192,6 +198,7 @@ function matchesHeaderMeaning(header: string, column: MultiLocationColumn) {
   if (column === 'entity') return hasName && hasAnyToken(tokens, ['entity', 'entidade']);
   if (column === 'location') return hasAnyToken(tokens, ['location', 'local', 'localidade', 'localizacao']);
   if (column === 'genotype') return hasName && tokens.has('ger');
+  if (column === 'entryCode') return hasAnyToken(tokens, ['entrycode']) || (tokens.has('entry') && tokens.has('code')) || (tokens.has('codigo') && tokens.has('entrada'));
   if (column === 'observer') return hasName && tokens.has('obs');
   if (column === 'plot') return hasName && hasAnyToken(tokens, ['plot', 'parcela']);
   return false;
@@ -249,6 +256,7 @@ export function parseMultiLocationMatrix(matrix: MultiLocationCellValue[][]): Mu
     entity: findHeaderIndex(headers, 'entity'),
     location: findHeaderIndex(headers, 'location'),
     genotype: findHeaderIndex(headers, 'genotype'),
+    entryCode: findHeaderIndex(headers, 'entryCode'),
     observer: findHeaderIndex(headers, 'observer'),
     plot: findHeaderIndex(headers, 'plot'),
     block: findHeaderIndex(headers, 'block'),
@@ -267,7 +275,11 @@ export function parseMultiLocationMatrix(matrix: MultiLocationCellValue[][]): Mu
     throw new Error(`Não encontrei as colunas obrigatórias: ${missing.join(', ')}.`);
   }
 
-  const columnsAfterBlock = requiredColumns
+  const structuralColumns: Array<[keyof typeof columnIndexes, string]> = [
+    ...requiredColumns,
+    ['entryCode', 'Entry code'],
+  ];
+  const columnsAfterBlock = structuralColumns
     .filter(([key]) => key !== 'block' && columnIndexes[key] > columnIndexes.block)
     .map(([, label]) => label);
   if (columnsAfterBlock.length) {
@@ -302,6 +314,7 @@ export function parseMultiLocationMatrix(matrix: MultiLocationCellValue[][]): Mu
         entity: String(row[columnIndexes.entity] ?? '').trim(),
         location: String(row[columnIndexes.location] ?? '').trim(),
         genotype: String(row[columnIndexes.genotype] ?? '').trim(),
+        entryCode: columnIndexes.entryCode >= 0 ? String(row[columnIndexes.entryCode] ?? '').trim() : '',
         observer: String(row[columnIndexes.observer] ?? '').trim(),
         plot: String(row[columnIndexes.plot] ?? '').trim(),
         block: String(row[columnIndexes.block] ?? '').trim(),
@@ -333,15 +346,17 @@ export function aggregateMultiLocation(
   ));
 
   type MetricAccumulator = { sum: number; count: number };
-  type GenotypeAccumulator = { genotype: string; metrics: Map<string, MetricAccumulator> };
+  type GenotypeAccumulator = { genotype: string; entryCodes: Set<string>; metrics: Map<string, MetricAccumulator> };
   const groups = new Map<string, GenotypeAccumulator>();
+  const showEntryCode = filteredRecords.some((record) => record.entryCode.trim());
   let numericValueCount = 0;
 
   for (const record of filteredRecords) {
     if (!groups.has(record.genotype)) {
-      groups.set(record.genotype, { genotype: record.genotype, metrics: new Map() });
+      groups.set(record.genotype, { genotype: record.genotype, entryCodes: new Set(), metrics: new Map() });
     }
     const group = groups.get(record.genotype)!;
+    if (record.entryCode.trim()) group.entryCodes.add(record.entryCode.trim());
     for (const metric of selectedMetrics) {
       const value = toMultiLocationNumber(record.metrics[metric]);
       if (value === null) continue;
@@ -357,7 +372,9 @@ export function aggregateMultiLocation(
     .filter((group) => !onlyWithValues || selectedMetrics.some((metric) => (group.metrics.get(metric)?.count ?? 0) > 0))
     .sort((a, b) => naturalCompare(a.genotype, b.genotype))
     .map((group) => {
-      const output: Record<string, MultiLocationCellValue> = { '(GER) Name': group.genotype };
+      const output: Record<string, MultiLocationCellValue> = {};
+      if (showEntryCode) output['Entry code'] = Array.from(group.entryCodes).sort(naturalCompare).join(' | ');
+      output['(GER) Name'] = group.genotype;
       for (const metric of selectedMetrics) {
         const accumulator = group.metrics.get(metric);
         output[`${metric} (média)`] = accumulator?.count ? accumulator.sum / accumulator.count : '';
@@ -367,7 +384,7 @@ export function aggregateMultiLocation(
 
   return {
     rows,
-    headers: ['(GER) Name', ...selectedMetrics.map((metric) => `${metric} (média)`) ],
+    headers: [...(showEntryCode ? ['Entry code'] : []), '(GER) Name', ...selectedMetrics.map((metric) => `${metric} (média)`) ],
     filteredRecordCount: filteredRecords.length,
     numericValueCount,
   };
@@ -389,9 +406,11 @@ export function listMultiLocationRecords(
     && hasNumericMetric(record, selectedMetrics)
   ));
   const showBlock = filteredRecords.some((record) => isMultiLocationFilled(record.block));
+  const showEntryCode = filteredRecords.some((record) => record.entryCode.trim());
   const headers = [
     'Location',
     'Entity name',
+    ...(showEntryCode ? ['Entry code'] : []),
     '(GER) Name',
     '(OBS) Name',
     'Plot name',
@@ -414,10 +433,11 @@ export function listMultiLocationRecords(
       const output: Record<string, MultiLocationCellValue> = {
         Location: record.location,
         'Entity name': record.entity,
-        '(GER) Name': record.genotype,
-        '(OBS) Name': record.observer,
-        'Plot name': record.plot,
       };
+      if (showEntryCode) output['Entry code'] = record.entryCode;
+      output['(GER) Name'] = record.genotype;
+      output['(OBS) Name'] = record.observer;
+      output['Plot name'] = record.plot;
       if (showBlock) output.Block = record.block;
       for (const metric of selectedMetrics) {
         const value = record.metrics[metric];

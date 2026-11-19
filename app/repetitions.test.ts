@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
 import { aggregateRepetitions, parseMultiLocationMatrix, resolveRepetitionSelection, type MultiLocationRecord } from './multi-location';
 
-const selection = { metric: 'VIG', location: 'L1', entity: 'E1', observer: 'O1' };
+const selection = { metric: 'VIG', location: 'L1', entity: 'E1' };
 const record = (block: string, value: string | number, overrides: Partial<MultiLocationRecord> = {}): MultiLocationRecord => ({
-  location: 'L1', entity: 'E1', observer: 'O1', genotype: 'G1', plot: 'P1', block, metrics: { VIG: value }, ...overrides,
+  location: 'L1', entity: 'E1', entryCode: '', observer: 'O1', genotype: 'G1', plot: 'P1', block, metrics: { VIG: value }, ...overrides,
 });
 
 describe('Rep by Rep', () => {
@@ -27,12 +27,28 @@ describe('Rep by Rep', () => {
     const result = aggregateRepetitions([
       record('10', 10), record('3', 3), record('1', 1), record('A', 8),
       record('1', 0, { genotype: 'G2' }), record('3', 'texto', { genotype: 'G2' }),
-      record('1', 1000, { location: 'L2' }), record('1', 1000, { entity: 'E2' }), record('1', 1000, { observer: 'O2' }),
+      record('1', 1000, { location: 'L2' }), record('1', 1000, { entity: 'E2' }),
     ], selection);
     expect(result.headers).toEqual(['Genótipo', 'Rep1', 'Rep3', 'Rep10', 'Rep A', 'Média']);
     expect(result.rows[0]['Média']).toBe(5.5);
     expect(result.rows[1]).toEqual({ Genótipo: 'G2', Rep1: 0, Rep3: '', Rep10: '', 'Rep A': '', Média: 0 });
     expect(result.filteredRecordCount).toBe(6);
+  });
+
+  it('combina todos os valores de (OBS) Name e mostra Entry code sem separar o agrupamento por genótipo', () => {
+    const result = aggregateRepetitions([
+      record('1', 4, { genotype: 'G1', entryCode: '1', observer: 'P1001' }),
+      record('2', 8, { genotype: 'G1', entryCode: '2', observer: 'P1002' }),
+      record('1', 3, { genotype: 'G2', entryCode: '7', observer: 'P1003' }),
+      record('2', 5, { genotype: 'G2', entryCode: '7', observer: 'P1004' }),
+    ], selection);
+
+    expect(result.headers).toEqual(['Entry code', 'Genótipo', 'Rep1', 'Rep2', 'Média']);
+    expect(result.rows).toEqual([
+      { 'Entry code': '1 | 2', Genótipo: 'G1', Rep1: 4, Rep2: 8, Média: 6 },
+      { 'Entry code': '7', Genótipo: 'G2', Rep1: 3, Rep2: 5, Média: 4 },
+    ]);
+    expect(result.filteredRecordCount).toBe(4);
   });
 
   it('mantém Sem Block separado e média indisponível quando todos os Blocks são vazios', () => {
@@ -51,10 +67,10 @@ describe('Rep by Rep', () => {
     const first = resolveRepetitionSelection(records, ['EMPTY', 'VIG', 'ALT']);
     expect(first.selection).toEqual(selection);
     const next = resolveRepetitionSelection(records, ['VIG', 'ALT'], { ...first.selection, metric: 'ALT' });
-    expect(next.selection).toEqual({ metric: 'ALT', location: 'L2', entity: 'E2', observer: 'O2' });
+    expect(next.selection).toEqual({ metric: 'ALT', location: 'L2', entity: 'E2' });
     expect(next.options.location).toEqual(['L2']);
     expect(resolveRepetitionSelection(records, ['VIG', 'ALT'], next.selection).selection).toEqual(next.selection);
-    expect(resolveRepetitionSelection([], []).selection).toEqual({ metric: '', location: '', entity: '', observer: '' });
+    expect(resolveRepetitionSelection([], []).selection).toEqual({ metric: '', location: '', entity: '' });
   });
 
   it('exporta os mesmos valores e a mesma ordem de colunas para Excel e CSV', () => {
