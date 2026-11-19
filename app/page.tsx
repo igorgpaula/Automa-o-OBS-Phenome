@@ -4,6 +4,7 @@ import { ChangeEvent, DragEvent, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { buildHeatmapScales, heatmapCellStyle } from './heatmap';
 import MultiLocationWorkspace from './MultiLocationWorkspace';
+import { applyTwoDecimalSheetFormat, formatNumericVariable } from './numeric-format';
 import { analyzeSingleLocationHeaders, mapSingleLocationHeaders, normalizeSingleLocationHeader } from './single-location';
 
 type CellValue = string | number | boolean | Date | null | undefined;
@@ -242,10 +243,20 @@ export default function Home() {
 
   const activeColumnFilterCount = Object.values(columnFilters).filter((value) => value.trim()).length;
 
+  const heatmapValueHeaders = useMemo(() => {
+    if (mode === 'observacoes') return selectedMetrics.filter((header) => resultHeaders.includes(header));
+    if (mode === 'parcelas') return pivotMetricColumns.filter((header) => resultHeaders.includes(header));
+    return [...availableBlocks.map(blockHeader), 'Média'].filter((header) => resultHeaders.includes(header));
+  }, [mode, selectedMetrics, pivotMetricColumns, availableBlocks, resultHeaders]);
+  const heatmapHeaderSet = useMemo(() => new Set(heatmapValueHeaders), [heatmapValueHeaders]);
+
   const resultRows = useMemo(() => {
     const activeFilters = Object.entries(columnFilters).filter(([, value]) => value.trim());
     const filteredRows = activeFilters.length
-      ? transformedRows.filter((row) => activeFilters.every(([header, filter]) => normalize(displayValue(row[header])).includes(normalize(filter))))
+      ? transformedRows.filter((row) => activeFilters.every(([header, filter]) => {
+        const value = heatmapHeaderSet.has(header) ? formatNumericVariable(row[header]) ?? displayValue(row[header]) : displayValue(row[header]);
+        return normalize(value).includes(normalize(filter));
+      }))
       : transformedRows;
     if (!sortConfig || !resultHeaders.includes(sortConfig.header)) return filteredRows;
     return filteredRows.map((row, index) => ({ row, index })).sort((a, b) => {
@@ -259,14 +270,7 @@ export default function Home() {
       const comparison = compareCellValues(aValue, bValue);
       return comparison === 0 ? a.index - b.index : sortConfig.direction === 'asc' ? comparison : -comparison;
     }).map(({ row }) => row);
-  }, [transformedRows, columnFilters, sortConfig, resultHeaders]);
-
-  const heatmapValueHeaders = useMemo(() => {
-    if (mode === 'observacoes') return selectedMetrics.filter((header) => resultHeaders.includes(header));
-    if (mode === 'parcelas') return pivotMetricColumns.filter((header) => resultHeaders.includes(header));
-    return [...availableBlocks.map(blockHeader), 'Média'].filter((header) => resultHeaders.includes(header));
-  }, [mode, selectedMetrics, pivotMetricColumns, availableBlocks, resultHeaders]);
-  const heatmapHeaderSet = useMemo(() => new Set(heatmapValueHeaders), [heatmapValueHeaders]);
+  }, [transformedRows, columnFilters, sortConfig, resultHeaders, heatmapHeaderSet]);
   const heatmapScales = useMemo(() => buildHeatmapScales(
     resultRows,
     heatmapValueHeaders,
@@ -277,6 +281,11 @@ export default function Home() {
     if (!heatmapEnabled || !heatmapHeaderSet.has(header)) return undefined;
     const scaleKey = mode === 'repeticoes' ? String(row['Variável'] ?? '') : header;
     return heatmapCellStyle(row[header], heatmapScales.get(scaleKey));
+  }
+
+  function displayTableValue(value: CellValue, header: string) {
+    if (heatmapHeaderSet.has(header)) return formatNumericVariable(value) ?? displayValue(value);
+    return displayValue(value);
   }
 
   const totalPlots = useMemo(() => columnMap.plot
@@ -379,6 +388,7 @@ export default function Home() {
   function exportData(format: 'xlsx' | 'csv') {
     if (!resultRows.length) return;
     const sheet = XLSX.utils.json_to_sheet(resultRows, { header: resultHeaders });
+    applyTwoDecimalSheetFormat(sheet, resultRows, resultHeaders, heatmapValueHeaders);
     const stem = safeFileStem(fileName) || 'phenome';
     if (format === 'xlsx') {
       const workbook = XLSX.utils.book_new();
@@ -401,7 +411,7 @@ export default function Home() {
     if (!resultRows.length) return;
     const clipboardRows = [
       resultHeaders,
-      ...resultRows.map((row) => resultHeaders.map((header) => displayValue(row[header]))),
+      ...resultRows.map((row) => resultHeaders.map((header) => displayTableValue(row[header], header))),
     ];
     const text = clipboardRows
       .map((row) => row.map((value) => value.replace(/\t/g, ' ').replace(/\r?\n/g, ' ')).join('\t'))
@@ -503,7 +513,7 @@ export default function Home() {
                 return <th key={header} aria-sort={activeSort === 'asc' ? 'ascending' : activeSort === 'desc' ? 'descending' : 'none'}><div className="th-content"><span>{header}</span><button className={`sort-button ${activeSort ? 'active' : ''}`} type="button" onClick={() => toggleSort(header)} aria-label={`${sortLabel}: ${header}`} title={`${sortLabel}. Clique para alterar.`}>{activeSort === 'asc' ? '↑' : activeSort === 'desc' ? '↓' : '↕'}</button></div></th>;
               })}</tr><tr className="filter-row">{resultHeaders.map((header) => <th key={`filter-${header}`}><input className="column-filter" value={columnFilters[header] ?? ''} onChange={(event) => updateColumnFilter(header, event.target.value)} placeholder="Filtrar…" aria-label={`Filtrar coluna ${header}`} /></th>)}</tr></thead><tbody>{resultRows.length ? resultRows.map((row, rowIndex) => <tr key={rowIndex}>{resultHeaders.map((header) => {
                 const heatmapStyle = getHeatmapStyle(row, header);
-                return <td key={header} className={`${isFilled(row[header]) ? '' : 'empty-cell'}${heatmapStyle ? ' heatmap-cell' : ''}`} style={heatmapStyle}>{displayValue(row[header]) || '—'}</td>;
+                return <td key={header} className={`${isFilled(row[header]) ? '' : 'empty-cell'}${heatmapStyle ? ' heatmap-cell' : ''}`} style={heatmapStyle}>{displayTableValue(row[header], header) || '—'}</td>;
               })}</tr>) : <tr><td className="no-filter-results" colSpan={resultHeaders.length}>Nenhuma linha corresponde aos filtros das colunas.</td></tr>}</tbody></table></div>
               <div className="table-footer"><div className="table-summary"><span>{resultRows.length.toLocaleString('pt-BR')} {resultRows.length === 1 ? 'linha filtrada' : 'linhas filtradas'}</span>{activeColumnFilterCount > 0 && <button className="text-button" type="button" onClick={() => { setColumnFilters({}); setCopyStatus('idle'); }}>Limpar {activeColumnFilterCount} {activeColumnFilterCount === 1 ? 'filtro' : 'filtros'}</button>}<button className={`heatmap-toggle ${heatmapEnabled ? 'active' : ''}`} type="button" aria-pressed={heatmapEnabled} onClick={() => setHeatmapEnabled((current) => !current)}><span className="heatmap-swatch" aria-hidden="true" />Heatmap</button>{heatmapEnabled && <span className="heatmap-legend" aria-label="Escala do heatmap: menor valor em vermelho e maior valor em verde"><span>Menor</span><i aria-hidden="true" /><span>Maior</span></span>}</div><div className="export-actions"><button className={`button secondary copy-button ${copyStatus}`} type="button" onClick={() => void copyData()} disabled={!resultRows.length}>{copyStatus === 'copied' ? 'Dados copiados!' : copyStatus === 'error' ? 'Não foi possível copiar' : 'Copiar dados'}</button><button className="button secondary" type="button" onClick={() => exportData('csv')}>Baixar CSV</button><button className="button primary" type="button" onClick={() => exportData('xlsx')}>Baixar Excel</button></div></div></>
             )}
